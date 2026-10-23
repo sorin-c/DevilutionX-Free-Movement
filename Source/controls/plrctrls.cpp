@@ -1740,6 +1740,41 @@ bool IsPathBlocked(Point position, Direction dir)
 	return !PosOkPlayer(myPlayer, leftStep) && !PosOkPlayer(myPlayer, rightStep);
 }
 
+/**
+ * Number of tiles to walk ahead in the direction held on the controller. Queuing more than one step keeps the
+ * player walking without a pause between steps, even when the walk command takes a few game ticks to arrive.
+ */
+constexpr int ControllerWalkLookahead = 3;
+
+/**
+ * @brief Finds the furthest tile, up to ControllerWalkLookahead steps away, that can be reached by walking in a
+ * straight line in the given direction.
+ * @return The tile the player is stepping into if not even one step is possible
+ */
+Point GetStraightWalkTarget(const Player &player, Direction dir)
+{
+	Point target = player.position.future;
+	for (int i = 0; i < ControllerWalkLookahead; i++) {
+		const Point next = target + dir;
+		if (!PosOkPlayer(player, next) || IsPathBlocked(target, dir))
+			break;
+		target = next;
+	}
+	return target;
+}
+
+/**
+ * @brief Checks whether the left stick points to the left (counterclockwise) of the given direction on the screen.
+ */
+bool IsLeftStickLeftOf(Direction dir)
+{
+	// Screen space unit vectors (y up) for each direction, in the order of the Direction enum
+	constexpr int DirX[8] = { 0, -1, -1, -1, 0, 1, 1, 1 };
+	constexpr int DirY[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
+	const auto index = static_cast<size_t>(dir);
+	return DirX[index] * leftStickY - DirY[index] * leftStickX > 0;
+}
+
 void WalkInDir(Player &player, AxisDirection dir)
 {
 	if (dir.x == AxisDirectionX_NONE && dir.y == AxisDirectionY_NONE) {
@@ -1749,7 +1784,6 @@ void WalkInDir(Player &player, AxisDirection dir)
 	}
 
 	const Direction pdir = FaceDir[static_cast<std::size_t>(dir.x)][static_cast<std::size_t>(dir.y)];
-	const auto delta = player.position.future + pdir;
 
 	if (!player.isWalking() && player.CanChangeAction())
 		player._pdir = pdir;
@@ -1760,13 +1794,21 @@ void WalkInDir(Player &player, AxisDirection dir)
 		return;
 	}
 
-	if (PosOkPlayer(player, delta) && IsPathBlocked(player.position.future, pdir)) {
-		if (player._pmode == PM_STAND)
-			StartStand(player, pdir);
-		return; // Don't start backtrack around obstacles
+	// When the way ahead is blocked, slide along the obstacle by stepping in one of the neighboring directions,
+	// trying the one closer to where the stick points first. Never backtrack around obstacles.
+	const bool leftFirst = IsLeftStickLeftOf(pdir);
+	const Direction candidates[] = { pdir, leftFirst ? Left(pdir) : Right(pdir), leftFirst ? Right(pdir) : Left(pdir) };
+	for (const Direction candidate : candidates) {
+		const Point target = GetStraightWalkTarget(player, candidate);
+		if (target == player.position.future)
+			continue;
+		if (target != player.GetTargetPosition())
+			NetSendCmdLoc(player.getId(), true, CMD_WALKXY, target);
+		return;
 	}
 
-	NetSendCmdLoc(player.getId(), true, CMD_WALKXY, delta);
+	if (player._pmode == PM_STAND)
+		StartStand(player, pdir);
 }
 
 void QuestLogMove(AxisDirection moveDir)
