@@ -29,6 +29,7 @@
 #include "engine/points_in_rectangle_range.hpp"
 #include "engine/render/clx_render.hpp"
 #include "engine/render/primitive_render.hpp"
+#include "engine/render/smooth_walking.hpp"
 #include "engine/trn.hpp"
 #include "headless_mode.hpp"
 #include "hwcursor.hpp"
@@ -706,7 +707,7 @@ void AlterMousePositionViaPlayer(Point &screenPosition, const Player &myPlayer)
 
 	// Adjust for player walking
 	if (myPlayer.isWalking()) {
-		const Displacement offset = GetOffsetForWalking(myPlayer.AnimInfo, myPlayer._pdir, true);
+		const Displacement offset = GetOffsetForWalking(myPlayer.AnimInfo, myPlayer._pdir, true) - GetSmoothWalkingOffset(myPlayer);
 		screenPosition.x -= offset.deltaX;
 		screenPosition.y -= offset.deltaY;
 

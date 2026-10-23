@@ -34,6 +34,7 @@
 #include "engine/render/clx_render.hpp"
 #include "engine/render/dun_render.hpp"
 #include "engine/render/light_render.hpp"
+#include "engine/render/smooth_walking.hpp"
 #include "engine/render/text_render.hpp"
 #include "engine/trn.hpp"
 #include "engine/world_tile.hpp"
@@ -409,7 +410,7 @@ void DrawPlayerIconHelper(const Surface &out, MissileGraphicID missileGraphicId,
 	const bool lighting = &player != MyPlayer;
 
 	if (player.isWalking())
-		position += GetOffsetForWalking(player.AnimInfo, player._pdir);
+		position += GetOffsetForWalking(player.AnimInfo, player._pdir) + GetSmoothWalkingOffset(player);
 
 	position.x -= GetMissileSpriteData(missileGraphicId).animWidth2;
 
@@ -471,8 +472,13 @@ void DrawPlayer(const Surface &out, const Player &player, Point tilePosition, Po
 		return;
 	}
 
-	const ClxSprite sprite = player.currentSprite();
-	const Point spriteBufferPosition = targetBufferPosition + player.getRenderingOffset(sprite);
+	ClxSprite sprite = player.currentSprite();
+	if (const std::optional<Direction> facing = GetSmoothWalkingFacing(player); facing && !player.previewCelSprite) {
+		const PlayerAnimationData &walkAnimation = player.AnimationData[static_cast<size_t>(player_graphic::Walk)];
+		if (walkAnimation.sprites)
+			sprite = walkAnimation.spritesForDirection(*facing)[player.AnimInfo.getFrameToUseForRendering()];
+	}
+	const Point spriteBufferPosition = targetBufferPosition + player.getRenderingOffset(sprite) + GetSmoothWalkingOffset(player);
 
 	if (&player == PlayerUnderCursor)
 		ClxDrawOutlineSkipColorZero(out, GetPlayerOutlineColor(player.getId()), spriteBufferPosition, sprite);
@@ -1175,13 +1181,21 @@ Displacement tileShift;
 int tileColumns;
 int tileRows;
 
+/**
+ * @brief Whether the camera follows the smoothed position of the walking player, see smooth_walking.hpp
+ */
+bool IsCameraSmoothed()
+{
+	return MyPlayer->isWalking() && *GetOptions().Gameplay.smoothWalking;
+}
+
 void CalcFirstTilePosition(Point &position, Displacement &offset)
 {
 	// Adjust by player offset and tile grid alignment
 	const Player &myPlayer = *MyPlayer;
 	offset = tileOffset;
 	if (myPlayer.isWalking())
-		offset += GetOffsetForWalking(myPlayer.AnimInfo, myPlayer._pdir, true);
+		offset += GetOffsetForWalking(myPlayer.AnimInfo, myPlayer._pdir, true) - GetSmoothWalkingOffset(myPlayer);
 
 	position += tileShift;
 
@@ -1217,6 +1231,14 @@ void CalcFirstTilePosition(Point &position, Displacement &offset)
 		default:
 			break;
 		}
+	}
+
+	// The smoothed camera can be a little off the tiles in any direction, so draw some more around the edges
+	if (IsCameraSmoothed()) {
+		offset.deltaX -= TILE_WIDTH;
+		offset.deltaY -= TILE_HEIGHT;
+		position += Direction::North;
+		position += Direction::West;
 	}
 }
 
@@ -1269,6 +1291,12 @@ void DrawGame(const Surface &fullOut, Point position, Displacement offset)
 		}
 	}
 
+	if (IsCameraSmoothed()) {
+		// See CalcFirstTilePosition
+		columns += 2;
+		rows += 4;
+	}
+
 #ifdef DUN_RENDER_STATS
 	DunRenderStats.clear();
 #endif
@@ -1315,6 +1343,7 @@ void DrawView(const Surface &out, Point startPosition)
 #ifdef _DEBUG
 	DebugCoordsMap.clear();
 #endif
+	UpdateSmoothWalking();
 	Displacement offset = {};
 	CalcFirstTilePosition(startPosition, offset);
 	DrawGame(out, startPosition, offset);

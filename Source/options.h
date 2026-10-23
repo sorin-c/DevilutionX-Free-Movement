@@ -638,6 +638,8 @@ struct GameplayOptions : OptionCategoryBase {
 	OptionEntryBoolean showItemLabels;
 	/** @brief Refill belt from inventory, or rather, use potions/scrolls from inventory first when belt item is consumed.  */
 	OptionEntryBoolean autoRefillBelt;
+	/** @brief Draw walking players moving along a smooth line instead of from tile to tile. */
+	OptionEntryBoolean smoothWalking;
 	/** @brief Locally disable clicking on shrines which permanently cripple character. */
 	OptionEntryBoolean disableCripplingShrines;
 	/** @brief Spell hotkeys instantly cast the spell. */
