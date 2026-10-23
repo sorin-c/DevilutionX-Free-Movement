@@ -149,6 +149,57 @@ TEST(PathTest, FindPathDiagonalsFirst4Right12Down)
 	CheckPath({ 8, 8 }, { 12, 20 }, { "↘", "↘", "↘", "↘", "↓", "↓", "↓", "↓", "↓", "↓", "↓", "↓" });
 }
 
+std::vector<Dir> FindStraightenedPath(Point startPosition, Point destinationPosition, tl::function_ref<bool(Point)> posOk)
+{
+	constexpr size_t MaxPathLength = 24;
+	int8_t pathSteps[MaxPathLength];
+	const auto canStep = [](Point, Point) { return true; };
+	const int pathLength = FindPath(canStep, posOk, startPosition, destinationPosition, pathSteps, MaxPathLength);
+	StraightenPath(canStep, posOk, startPosition, pathSteps, pathLength);
+	return ToSyms(std::span<const int8_t>(pathSteps, pathLength));
+}
+
+TEST(PathTest, StraightenPathSpreadsDiagonalSteps)
+{
+	// FindPath would go ↖ ↖ ← (see FindPathDiagonalsFirst3Left2Up)
+	EXPECT_THAT(FindStraightenedPath({ 8, 8 }, { 5, 6 }, [](Point) { return true; }), ElementsAreArray(ToSyms(std::vector<std::string> { "↖", "←", "↖" })));
+	// FindPath would go ↘ ↘ ↘ ↘ followed by 8 times ↓ (see FindPathDiagonalsFirst4Right12Down)
+	EXPECT_THAT(FindStraightenedPath({ 8, 8 }, { 12, 20 }, [](Point) { return true; }),
+	    ElementsAreArray(ToSyms(std::vector<std::string> { "↓", "↘", "↓", "↓", "↘", "↓", "↓", "↘", "↓", "↓", "↘", "↓" })));
+}
+
+TEST(PathTest, StraightenPathKeepsStraightPaths)
+{
+	EXPECT_THAT(FindStraightenedPath({ 8, 8 }, { 4, 4 }, [](Point) { return true; }), ElementsAreArray(ToSyms(std::vector<std::string>(4, "↖"))));
+	EXPECT_THAT(FindStraightenedPath({ 8, 8 }, { 8, 12 }, [](Point) { return true; }), ElementsAreArray(ToSyms(std::vector<std::string>(4, "↓"))));
+}
+
+TEST(PathTest, StraightenPathAvoidsObstacles)
+{
+	// The straight line would pass through { 9, 9 }
+	const auto posOk = [](Point position) { return position != Point { 9, 9 }; };
+	const std::vector<Dir> path = FindStraightenedPath({ 8, 8 }, { 10, 11 }, posOk);
+	ASSERT_EQ(path.size(), 3);
+	Point position { 8, 8 };
+	for (const Dir step : path) {
+		switch (step) {
+		case Dir::Down: position += Displacement { 0, 1 }; break;
+		case Dir::Right: position += Displacement { 1, 0 }; break;
+		case Dir::DownRight: position += Displacement { 1, 1 }; break;
+		default: FAIL() << "Unexpected step " << step;
+		}
+		EXPECT_NE(position, (Point { 9, 9 }));
+	}
+	EXPECT_EQ(position, (Point { 10, 11 }));
+}
+
+TEST(PathTest, StraightenPathAllowsBlockedDestination)
+{
+	// Paths to attack a monster end on the monster's tile, which can't be walked on.
+	const auto posOk = [](Point position) { return position != Point { 11, 9 }; };
+	EXPECT_THAT(FindStraightenedPath({ 8, 8 }, { 11, 9 }, posOk), ElementsAreArray(ToSyms(std::vector<std::string> { "→", "↘", "→" })));
+}
+
 TEST(PathTest, LongPaths)
 {
 	// Starting from the middle of the world and trying to path to a border exceeds the maximum path size

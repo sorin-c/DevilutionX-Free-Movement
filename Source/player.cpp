@@ -1923,11 +1923,13 @@ void Player::UpdatePreviewCelSprite(_cmd_id cmdId, Point point, uint16_t wParam1
 
 	if (minimalWalkDistance >= 0 && position.future != point) {
 		int8_t testWalkPath[MaxPathLengthPlayer];
-		const int steps = FindPath(CanStep, [this](Point tile) { return PosOkPlayer(*this, tile); }, position.future, point, testWalkPath, MaxPathLengthPlayer);
+		const auto posOk = [this](Point tile) { return PosOkPlayer(*this, tile); };
+		const int steps = FindPath(CanStep, posOk, position.future, point, testWalkPath, MaxPathLengthPlayer);
 		if (steps == 0) {
 			// Can't walk to desired location => stand still
 			return;
 		}
+		StraightenPath(CanStep, posOk, position.future, testWalkPath, steps);
 		if (steps >= minimalWalkDistance) {
 			graphic = player_graphic::Walk;
 			switch (testWalkPath[0]) {
@@ -3123,10 +3125,12 @@ void MakePlrPath(Player &player, Point targetPosition, bool endspace)
 		return;
 	}
 
-	int path = FindPath(CanStep, [&player](Point position) { return PosOkPlayer(player, position); }, player.position.future, targetPosition, player.walkpath, MaxPathLengthPlayer);
+	const auto posOk = [&player](Point position) { return PosOkPlayer(player, position); };
+	int path = FindPath(CanStep, posOk, player.position.future, targetPosition, player.walkpath, MaxPathLengthPlayer);
 	if (path == 0) {
 		return;
 	}
+	StraightenPath(CanStep, posOk, player.position.future, player.walkpath, path);
 
 	if (!endspace) {
 		path--;
