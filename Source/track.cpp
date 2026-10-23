@@ -85,7 +85,10 @@ void RepeatWalk(Player &player)
 	if (!InDungeonBounds(cursPosition))
 		return;
 
-	if (player._pmode != PM_STAND && (!player.isWalking() || player.AnimInfo.getFrameToUseForRendering() <= 6))
+	// Update the destination while a step is still in progress, so the next step is already queued when the current
+	// one ends. Waiting for the last frames of the step makes the command arrive too late and the player stands still
+	// for a moment between steps.
+	if (player._pmode != PM_STAND && !player.isWalking())
 		return;
 
 	const Point target = player.GetTargetPosition();
@@ -142,7 +145,8 @@ void RepeatPlayerAction()
 		return;
 	if (myPlayer._pInvincible)
 		return;
-	if (!myPlayer.CanChangeAction())
+	// Walking can change its destination during a step, see RepeatWalk.
+	if (LastPlayerAction != PlayerActionType::Walk && !myPlayer.CanChangeAction())
 		return;
 
 	const bool rangedAttack = myPlayer.UsesRangedWeapon();
