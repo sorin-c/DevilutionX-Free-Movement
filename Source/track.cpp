@@ -91,17 +91,31 @@ void RepeatWalk(Player &player)
 	if (player._pmode != PM_STAND && !player.isWalking())
 		return;
 
-	const Point target = player.GetTargetPosition();
-	if (cursPosition == target)
+	const Point destination = GetWalkDestination(player, cursPosition);
+	if (destination == player.GetTargetPosition())
 		return;
 
-	if (IsWalkingRequestRedundant(player, cursPosition))
+	if (IsWalkingRequestRedundant(player, destination))
 		return;
 
-	NetSendCmdLoc(MyPlayerId, true, CMD_WALKXY, cursPosition);
+	NetSendCmdLoc(MyPlayerId, true, CMD_WALKXY, destination);
 }
 
 } // namespace
+
+Point GetWalkDestination(const Player &player, Point clickedTile)
+{
+	const Point start = player.position.future;
+	const Displacement delta = clickedTile - start;
+	const int length = start.WalkingDistance(clickedTile);
+	// Go back along the line from the clicked tile towards the player until a tile can be walked on.
+	for (int i = length; i > 0; i--) {
+		const Point tile = start + Displacement { delta.deltaX * i / length, delta.deltaY * i / length };
+		if (PosOkPlayer(player, tile))
+			return tile;
+	}
+	return clickedTile;
+}
 
 void InvalidateTargets()
 {
