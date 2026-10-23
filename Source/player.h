@@ -301,6 +301,31 @@ struct Player {
 	uint8_t plrlevel;
 	bool plrIsOnSetLevel;
 	ActorPosition position;
+	/**
+	 * @brief Free movement: how far the player stands from the center of position.tile, in FreeMovementUnitsPerTile.
+	 */
+	DisplacementOf<int16_t> freeOffset;
+	/**
+	 * @brief Free movement: freeOffset at the start of the current tile based walk. It shrinks to nothing during the walk.
+	 */
+	DisplacementOf<int16_t> freeWalkResidual;
+	/**
+	 * @brief Free movement: the point the player walks towards, in FreeMovementUnitsPerTile.
+	 */
+	PointOf<int32_t> freeTarget;
+	/**
+	 * @brief Free movement: tiles to pass through on the way to freeTarget, when obstacles block the straight line.
+	 * The player cuts corners between them where the way is clear.
+	 */
+	std::array<Point, MaxPathLengthPlayer> freeWaypoints;
+	/** @brief Free movement: the number of entries in freeWaypoints. */
+	uint8_t freeWaypointCount;
+	/** @brief Free movement: the entry of freeWaypoints the player is walking towards, freeTarget once it equals freeWaypointCount. */
+	uint8_t freeWaypointIndex;
+	/** @brief Free movement: whether the player is walking towards freeTarget. */
+	bool freeMoving;
+	/** @brief Free movement: whether the walking animation for free movement is playing. */
+	bool freeAnimating;
 	Direction _pdir; // Direction faced by player (direction enum)
 	HeroClass _pClass;
 
@@ -966,6 +991,26 @@ void PlrDoTrans(Point position);
 void SetPlayerOld(Player &player);
 void FixPlayerLocation(Player &player, Direction bDir);
 void StartStand(Player &player, Direction dir);
+
+/** @brief Precision of free movement positions: a tile is split into this many units along each axis. */
+constexpr int FreeMovementUnitsPerTile = 256;
+
+/**
+ * @brief Gets the exact position of the player in FreeMovementUnitsPerTile, including free movement.
+ */
+PointOf<int32_t> GetFreePosition(const Player &player);
+
+/**
+ * @brief Starts free movement (moving smoothly in any direction instead of from tile to tile) towards a point.
+ * @param player The player to move
+ * @param target Where to move to, in FreeMovementUnitsPerTile. Moving to the player's own position stops.
+ */
+void StartFreeMovement(Player &player, PointOf<int32_t> target);
+
+/**
+ * @brief Screen space offset for drawing the player, because of free movement.
+ */
+Displacement GetFreeMovementRenderingOffset(const Player &player);
 void StartPlrBlock(Player &player, Direction dir);
 void FixPlrWalkTags(const Player &player);
 void StartPlrHit(Player &player, Fixed26_6 dam, bool forcehit);

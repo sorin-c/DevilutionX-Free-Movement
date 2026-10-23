@@ -411,6 +411,7 @@ void DrawPlayerIconHelper(const Surface &out, MissileGraphicID missileGraphicId,
 
 	if (player.isWalking())
 		position += GetOffsetForWalking(player.AnimInfo, player._pdir) + GetSmoothWalkingOffset(player);
+	position += GetFreeMovementRenderingOffset(player);
 
 	position.x -= GetMissileSpriteData(missileGraphicId).animWidth2;
 
@@ -478,7 +479,7 @@ void DrawPlayer(const Surface &out, const Player &player, Point tilePosition, Po
 		if (walkAnimation.sprites)
 			sprite = walkAnimation.spritesForDirection(*facing)[player.AnimInfo.getFrameToUseForRendering()];
 	}
-	const Point spriteBufferPosition = targetBufferPosition + player.getRenderingOffset(sprite) + GetSmoothWalkingOffset(player);
+	const Point spriteBufferPosition = targetBufferPosition + player.getRenderingOffset(sprite) + GetSmoothWalkingOffset(player) + GetFreeMovementRenderingOffset(player);
 
 	if (&player == PlayerUnderCursor)
 		ClxDrawOutlineSkipColorZero(out, GetPlayerOutlineColor(player.getId()), spriteBufferPosition, sprite);
@@ -1186,7 +1187,7 @@ int tileRows;
  */
 bool IsCameraSmoothed()
 {
-	return MyPlayer->isWalking() && *GetOptions().Gameplay.smoothWalking;
+	return (MyPlayer->isWalking() && *GetOptions().Gameplay.smoothWalking) || GetFreeMovementRenderingOffset(*MyPlayer) != Displacement {};
 }
 
 void CalcFirstTilePosition(Point &position, Displacement &offset)
@@ -1196,6 +1197,7 @@ void CalcFirstTilePosition(Point &position, Displacement &offset)
 	offset = tileOffset;
 	if (myPlayer.isWalking())
 		offset += GetOffsetForWalking(myPlayer.AnimInfo, myPlayer._pdir, true) - GetSmoothWalkingOffset(myPlayer);
+	offset -= GetFreeMovementRenderingOffset(myPlayer);
 
 	position += tileShift;
 

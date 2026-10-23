@@ -18,6 +18,11 @@ struct Player;
  * closest tile on the way there that can be walked on instead of not moving at all.
  */
 Point GetWalkDestination(const Player &player, Point clickedTile);
+
+/**
+ * @brief Starts free movement (see StartFreeMovement) of the local player towards the point under the mouse cursor.
+ */
+void FreeWalkToMouse();
 void InvalidateTargets();
 void RepeatPlayerAction();
 bool track_isscrolling();

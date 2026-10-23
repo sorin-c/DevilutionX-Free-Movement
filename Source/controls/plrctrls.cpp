@@ -1775,11 +1775,46 @@ bool IsLeftStickLeftOf(Direction dir)
 	return DirX[index] * leftStickY - DirY[index] * leftStickX > 0;
 }
 
+/**
+ * @brief Free movement (see StartFreeMovement) in the direction the stick or d-pad points.
+ */
+void WalkFreelyInDir(const Player &player, AxisDirection dir)
+{
+	// Screen space direction, with y pointing down. Use the analog stick when it is pushed, for any angle.
+	float screenX = leftStickX;
+	float screenY = -leftStickY;
+	if ((screenX * screenX) + (screenY * screenY) < 0.01F) {
+		screenX = dir.x == AxisDirectionX_RIGHT ? 1.F : (dir.x == AxisDirectionX_LEFT ? -1.F : 0.F);
+		screenY = dir.y == AxisDirectionY_DOWN ? 1.F : (dir.y == AxisDirectionY_UP ? -1.F : 0.F);
+	}
+
+	// Invert the projection of tiles to the screen: one tile along x is { 32, 16 } on screen, one tile along y { -32, 16 }
+	const float worldX = (screenX / TILE_WIDTH) + (screenY / TILE_HEIGHT);
+	const float worldY = (screenY / TILE_HEIGHT) - (screenX / TILE_WIDTH);
+	const float length = std::sqrt((worldX * worldX) + (worldY * worldY));
+	if (length <= 0)
+		return;
+
+	// Aim a little ahead of the player, so walking continues smoothly until the stick is released
+	constexpr float Lookahead = 2.F * FreeMovementUnitsPerTile;
+	const PointOf<int32_t> target = GetFreePosition(player) + DisplacementOf<int32_t> { static_cast<int32_t>(worldX / length * Lookahead), static_cast<int32_t>(worldY / length * Lookahead) };
+
+	// Only resend when the direction changes noticeably, to keep the number of network messages down
+	if (player.freeMoving) {
+		const DisplacementOf<int32_t> change = target - player.freeTarget;
+		if (std::abs(change.deltaX) + std::abs(change.deltaY) < FreeMovementUnitsPerTile / 2)
+			return;
+	}
+	NetSendCmdFreeMove(target);
+}
+
 void WalkInDir(Player &player, AxisDirection dir)
 {
 	if (dir.x == AxisDirectionX_NONE && dir.y == AxisDirectionY_NONE) {
 		if (ControlMode != ControlTypes::KeyboardAndMouse && player.walkpath[0] != WALK_NONE && player.destAction == ACTION_NONE)
 			NetSendCmdLoc(player.getId(), true, CMD_WALKXY, player.position.future); // Stop walking
+		if (ControlMode != ControlTypes::KeyboardAndMouse && player.freeMoving)
+			NetSendCmdFreeMove(GetFreePosition(player)); // Stop walking
 		return;
 	}
 
@@ -1791,6 +1826,11 @@ void WalkInDir(Player &player, AxisDirection dir)
 	if (IsStandingGround()) {
 		if (player._pmode == PM_STAND)
 			StartStand(player, pdir);
+		return;
+	}
+
+	if (*GetOptions().Gameplay.freeMovement) {
+		WalkFreelyInDir(player, dir);
 		return;
 	}
 

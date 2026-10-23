@@ -705,6 +705,11 @@ void AlterMousePositionViaPlayer(Point &screenPosition, const Player &myPlayer)
 	screenPosition.x += xo;
 	screenPosition.y += yo;
 
+	// Adjust for free movement
+	const Displacement freeMovementOffset = GetFreeMovementRenderingOffset(myPlayer);
+	screenPosition.x += freeMovementOffset.deltaX;
+	screenPosition.y += freeMovementOffset.deltaY;
+
 	// Adjust for player walking
 	if (myPlayer.isWalking()) {
 		const Displacement offset = GetOffsetForWalking(myPlayer.AnimInfo, myPlayer._pdir, true) - GetSmoothWalkingOffset(myPlayer);

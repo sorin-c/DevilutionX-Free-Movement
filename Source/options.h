@@ -640,6 +640,8 @@ struct GameplayOptions : OptionCategoryBase {
 	OptionEntryBoolean autoRefillBelt;
 	/** @brief Draw walking players moving along a smooth line instead of from tile to tile. */
 	OptionEntryBoolean smoothWalking;
+	/** @brief Walk in any direction instead of from tile to tile. */
+	OptionEntryBoolean freeMovement;
 	/** @brief Locally disable clicking on shrines which permanently cripple character. */
 	OptionEntryBoolean disableCripplingShrines;
 	/** @brief Spell hotkeys instantly cast the spell. */

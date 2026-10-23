@@ -195,6 +195,7 @@ std::string_view CmdIdString(_cmd_id cmd)
 	case CMD_OPENHIVE: return "CMD_OPENHIVE";
 	case CMD_OPENGRAVE: return "CMD_OPENGRAVE";
 	case CMD_SPAWNMONSTER: return "CMD_SPAWNMONSTER";
+	case CMD_FREEMOVE: return "CMD_FREEMOVE";
 	case FAKE_CMD_SETID: return "FAKE_CMD_SETID";
 	case FAKE_CMD_DROPID: return "FAKE_CMD_DROPID";
 	case CMD_INVALID: return "CMD_INVALID";
@@ -1212,6 +1213,18 @@ size_t OnWalk(const TCmdLoc &message, Player &player)
 		ClrPlrPath(player);
 		MakePlrPath(player, position, true);
 		player.destAction = ACTION_NONE;
+	}
+
+	return sizeof(message);
+}
+
+size_t OnFreeMove(const TCmdParam2 &message, Player &player)
+{
+	const PointOf<int32_t> target { Swap16LE(message.wParam1), Swap16LE(message.wParam2) };
+	const Point targetTile { target.x / FreeMovementUnitsPerTile, target.y / FreeMovementUnitsPerTile };
+
+	if (gbBufferMsgs != 1 && player.isOnActiveLevel() && InDungeonBounds(targetTile)) {
+		StartFreeMovement(player, target);
 	}
 
 	return sizeof(message);
@@ -3136,6 +3149,11 @@ void NetSendCmdParam2(bool bHiPri, _cmd_id bCmd, uint16_t wParam1, uint16_t wPar
 		NetSendLoPri(MyPlayerId, reinterpret_cast<std::byte *>(&cmd), sizeof(cmd));
 }
 
+void NetSendCmdFreeMove(PointOf<int32_t> target)
+{
+	NetSendCmdParam2(true, CMD_FREEMOVE, static_cast<uint16_t>(target.x), static_cast<uint16_t>(target.y));
+}
+
 void NetSendCmdParam4(bool bHiPri, _cmd_id bCmd, uint16_t wParam1, uint16_t wParam2, uint16_t wParam3, uint16_t wParam4)
 {
 	if (WasPlayerCmdAlreadyRequested(bCmd, {}, wParam1, wParam2, wParam3, wParam4))
@@ -3498,6 +3516,8 @@ size_t ParseCmd(uint8_t pnum, const TCmd *pCmd, size_t maxCmdSize)
 		return OnOpenGrave(*pCmd);
 	case CMD_SPAWNMONSTER:
 		return HandleCmd(OnSpawnMonster, player, pCmd, maxCmdSize);
+	case CMD_FREEMOVE:
+		return HandleCmd(OnFreeMove, player, pCmd, maxCmdSize);
 	default:
 		break;
 	}

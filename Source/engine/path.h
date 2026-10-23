@@ -66,6 +66,11 @@ const Displacement PathDirs[8] = {
 [[nodiscard]] int8_t GetPathDirection(Point startPosition, Point destinationPosition);
 
 /**
+ * @brief Gets the displacement of one step of a path, the inverse of GetPathDirection.
+ */
+[[nodiscard]] Displacement GetPathStepDisplacement(int8_t step);
+
+/**
  * @brief Reorders the steps of a path so it follows the straight line towards its destination as closely as possible.
  *
  * FindPath takes all diagonal steps first, so walking towards a target looks like an L shape. Each part of the path is

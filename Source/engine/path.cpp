@@ -181,6 +181,13 @@ int8_t GetPathDirection(Point startPosition, Point destinationPosition)
 	return PathDirections[(3 * (destinationPosition.y - startPosition.y)) + 4 + destinationPosition.x - startPosition.x];
 }
 
+Displacement GetPathStepDisplacement(int8_t step)
+{
+	// Inverse of GetPathDirection
+	constexpr Displacement StepDisplacements[9] = { { 0, 0 }, { 0, -1 }, { -1, 0 }, { 1, 0 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, 1 } };
+	return StepDisplacements[step];
+}
+
 int FindPath(tl::function_ref<bool(Point, Point)> canStep, tl::function_ref<bool(Point)> posOk, Point startPosition, Point destinationPosition, int8_t *path, size_t maxPathLength)
 {
 	const PointT start { startPosition };
@@ -286,13 +293,6 @@ namespace {
 
 /** @brief Longest part of a path that StraightenPath replaces with a single straight line. */
 constexpr int MaxStraightSegmentLength = 24;
-
-Displacement GetPathStepDisplacement(int8_t step)
-{
-	// Inverse of GetPathDirection
-	constexpr Displacement StepDisplacements[9] = { { 0, 0 }, { 0, -1 }, { -1, 0 }, { 1, 0 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, 1 } };
-	return StepDisplacements[step];
-}
 
 /**
  * @brief Divides and rounds half away from zero, so lines are symmetric in all directions.

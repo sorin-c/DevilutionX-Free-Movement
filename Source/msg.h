@@ -416,6 +416,11 @@ enum _cmd_id : uint8_t {
 	//
 	// body (TCmdSpawnMonster)
 	CMD_SPAWNMONSTER,
+	// Walk freely (not from tile to tile) towards a point.
+	//
+	// body (TCmdParam2):
+	//    int16_t x, y: target point in 1/FreeMovementUnitsPerTile of a tile
+	CMD_FREEMOVE,
 	// Fake command; set current player for succeeding mega pkt buffer messages.
 	//
 	// body (TFakeCmdPlr)
@@ -747,6 +752,11 @@ void NetSendCmdLocParam3(bool bHiPri, _cmd_id bCmd, Point position, uint16_t wPa
 void NetSendCmdLocParam4(bool bHiPri, _cmd_id bCmd, Point position, uint16_t wParam1, uint16_t wParam2, uint16_t wParam3, uint16_t wParam4);
 void NetSendCmdParam1(bool bHiPri, _cmd_id bCmd, uint16_t wParam1);
 void NetSendCmdParam2(bool bHiPri, _cmd_id bCmd, uint16_t wParam1, uint16_t wParam2);
+/**
+ * @brief Sends a request for the local player to walk freely (not from tile to tile) towards a point.
+ * @param target The point in 1/FreeMovementUnitsPerTile of a tile
+ */
+void NetSendCmdFreeMove(PointOf<int32_t> target);
 void NetSendCmdParam4(bool bHiPri, _cmd_id bCmd, uint16_t wParam1, uint16_t wParam2, uint16_t wParam3, uint16_t wParam4);
 void NetSendCmdQuest(bool bHiPri, const Quest &quest);
 void NetSendCmdGItem(bool bHiPri, _cmd_id bCmd, const Player &player, uint8_t ii);
