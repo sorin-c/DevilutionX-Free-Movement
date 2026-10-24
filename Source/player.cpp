@@ -1086,25 +1086,43 @@ void TryDisarm(const Player &player, Object &object)
 	}
 }
 
-/**
- * @brief Average distance of a tile based step, in percent of a tile.
- *
- * A step along a tile's side covers one tile and a step across its corner about 1.41 tiles, in the same time. Free
- * movement covers the average of the two in the same time, in every direction.
- */
-constexpr int FreeMovementStepLengthPercent = 120;
-
 /** @brief How close free movement gets to a tile that can't be walked on, from the center of the player's tile. */
 constexpr int FreeMovementWallDistance = FreeMovementUnitsPerTile / 4;
 
-int GetFreeMovementSpeed(const Player &player)
+/**
+ * @brief Game ticks per step of continuous tile based walking.
+ *
+ * Each following step starts on the walking animation's frame -1 (frame 3 when running in town), see
+ * StartWalkAnimation, and ends when the animation reaches its last frame.
+ */
+int GetTicksPerWalkStep(const Player &player)
 {
-	// A tile based walk takes this many game ticks per step, see StartWalkAnimation
-	int ticksPerStep = player._pWFrames + 1;
+	int ticksPerStep = player._pWFrames;
 	if (leveltype == DTYPE_TOWN && sgGameInitInfo.bRunInTown != 0)
-		ticksPerStep = player._pWFrames - 3;
-	ticksPerStep = std::max(ticksPerStep, 1);
-	return FreeMovementUnitsPerTile * FreeMovementStepLengthPercent / 100 / ticksPerStep;
+		ticksPerStep = player._pWFrames - 4;
+	return std::max(ticksPerStep, 1);
+}
+
+int32_t DivideRounded(int32_t numerator, int32_t denominator)
+{
+	const int32_t rounded = ((2 * std::abs(numerator)) + denominator) / (2 * denominator);
+	return numerator < 0 ? -rounded : rounded;
+}
+
+/**
+ * @brief Gets how far free movement goes towards a point in one game tick.
+ *
+ * Tile based walking takes one step per tile, both along a tile's side and across its corner, so reaching a point
+ * takes as many steps as the larger of the distances along x and y. Free movement reaches every point in the same
+ * time, so it is as fast as tile based walking in each of the 8 directions, and in between.
+ */
+DisplacementOf<int32_t> GetFreeMovementStep(const Player &player, DisplacementOf<int32_t> toTarget)
+{
+	const int32_t larger = std::max(std::abs(toTarget.deltaX), std::abs(toTarget.deltaY));
+	const int32_t ticks = larger * GetTicksPerWalkStep(player);
+	if (ticks <= FreeMovementUnitsPerTile)
+		return toTarget;
+	return { DivideRounded(toTarget.deltaX * FreeMovementUnitsPerTile, ticks), DivideRounded(toTarget.deltaY * FreeMovementUnitsPerTile, ticks) };
 }
 
 Point GetTileOfFreePosition(PointOf<int32_t> position)
@@ -1359,10 +1377,8 @@ void ProcessFreeMovement(Player &player)
 		player.freeWaypointIndex++;
 	const bool lastWaypoint = player.freeWaypointIndex >= player.freeWaypointCount;
 	const DisplacementOf<int32_t> toWaypoint = GetFreeWaypoint(player, player.freeWaypointIndex) - position;
-	const int distance = GetFreeMovementLength(toWaypoint);
-	const int speed = GetFreeMovementSpeed(player);
-	const bool arriving = distance <= speed;
-	const DisplacementOf<int32_t> step = arriving ? toWaypoint : DisplacementOf<int32_t> { toWaypoint.deltaX * speed / distance, toWaypoint.deltaY * speed / distance };
+	const DisplacementOf<int32_t> step = GetFreeMovementStep(player, toWaypoint);
+	const bool arriving = step == toWaypoint;
 
 	if (!MoveFreely(player, step) || (arriving && lastWaypoint)) {
 		StopFreeMovement(player);
