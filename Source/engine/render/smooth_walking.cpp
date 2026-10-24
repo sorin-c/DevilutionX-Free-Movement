@@ -139,7 +139,7 @@ Direction GetClosestFacing(Vector velocity, Direction currentFacing)
 
 void UpdatePlayer(const Player &player, SmoothWalkingState &state, uint32_t now)
 {
-	if (!*GetOptions().Gameplay.smoothWalking || !player.plractive || !player.isOnActiveLevel() || !player.isWalking()) {
+	if (!*GetOptions().Gameplay.freeMovement || !player.plractive || !player.isOnActiveLevel() || !player.isWalking()) {
 		state = {};
 		return;
 	}

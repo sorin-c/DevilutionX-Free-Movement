@@ -1187,7 +1187,7 @@ int tileRows;
  */
 bool IsCameraSmoothed()
 {
-	return (MyPlayer->isWalking() && *GetOptions().Gameplay.smoothWalking) || GetFreeMovementRenderingOffset(*MyPlayer) != Displacement {};
+	return (MyPlayer->isWalking() && *GetOptions().Gameplay.freeMovement) || GetFreeMovementRenderingOffset(*MyPlayer) != Displacement {};
 }
 
 void CalcFirstTilePosition(Point &position, Displacement &offset)
