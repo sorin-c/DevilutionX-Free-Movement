@@ -1103,26 +1103,41 @@ int GetTicksPerWalkStep(const Player &player)
 	return std::max(ticksPerStep, 1);
 }
 
-int32_t DivideRounded(int32_t numerator, int32_t denominator)
-{
-	const int32_t rounded = ((2 * std::abs(numerator)) + denominator) / (2 * denominator);
-	return numerator < 0 ? -rounded : rounded;
-}
+/**
+ * @brief Ratios of the smaller to the larger of a movement's x and y distances (in 1/1024) where free movement reaches
+ * the speed of the nearest of the 8 tile based directions.
+ *
+ * Movement within 5 degrees on screen of a direction along a tile's side (diagonal on screen) has a ratio below
+ * FreeMovementSideRatio. Movement within 5 degrees on screen of a direction across a tile's corner (left, right, up or
+ * down on screen) has a ratio above FreeMovementCornerRatio.
+ */
+constexpr int32_t FreeMovementSideRatio = 105;
+constexpr int32_t FreeMovementCornerRatio = 719;
 
 /**
  * @brief Gets how far free movement goes towards a point in one game tick.
  *
  * Tile based walking takes one step per tile, both along a tile's side and across its corner, so reaching a point
- * takes as many steps as the larger of the distances along x and y. Free movement reaches every point in the same
- * time, so it is as fast as tile based walking in each of the 8 directions, and in between.
+ * takes as many steps as the larger of the distances along x and y, and it covers sqrt(1 + ratio^2) tiles per step,
+ * with ratio being the smaller distance divided by the larger. Free movement uses the same speed, except that within
+ * 5 degrees on screen of one of the 8 directions it uses exactly that direction's speed, so aiming a little off
+ * doesn't slow the player down.
  */
 DisplacementOf<int32_t> GetFreeMovementStep(const Player &player, DisplacementOf<int32_t> toTarget)
 {
 	const int32_t larger = std::max(std::abs(toTarget.deltaX), std::abs(toTarget.deltaY));
-	const int32_t ticks = larger * GetTicksPerWalkStep(player);
-	if (ticks <= FreeMovementUnitsPerTile)
+	if (larger == 0)
 		return toTarget;
-	return { DivideRounded(toTarget.deltaX * FreeMovementUnitsPerTile, ticks), DivideRounded(toTarget.deltaY * FreeMovementUnitsPerTile, ticks) };
+	const int32_t smaller = std::min(std::abs(toTarget.deltaX), std::abs(toTarget.deltaY));
+	const int32_t ratio = smaller * 1024 / larger;
+	const double snappedRatio = std::clamp<int32_t>((ratio - FreeMovementSideRatio) * 1024 / (FreeMovementCornerRatio - FreeMovementSideRatio), 0, 1024) / 1024.0;
+	const double tilesPerStep = std::sqrt(1.0 + (snappedRatio * snappedRatio));
+	const double unitsPerTick = FreeMovementUnitsPerTile * tilesPerStep / GetTicksPerWalkStep(player);
+
+	const double distance = std::sqrt((static_cast<double>(toTarget.deltaX) * toTarget.deltaX) + (static_cast<double>(toTarget.deltaY) * toTarget.deltaY));
+	if (distance <= unitsPerTick)
+		return toTarget;
+	return { static_cast<int32_t>(std::lround(toTarget.deltaX * unitsPerTick / distance)), static_cast<int32_t>(std::lround(toTarget.deltaY * unitsPerTick / distance)) };
 }
 
 Point GetTileOfFreePosition(PointOf<int32_t> position)
