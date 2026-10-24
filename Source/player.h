@@ -306,6 +306,13 @@ struct Player {
 	 */
 	DisplacementOf<int16_t> freeOffset;
 	/**
+	 * @brief Free movement: the exact position at the start of the current game tick, see GetFreePosition.
+	 * Drawing moves the player from here to their current position until the next game tick.
+	 */
+	PointOf<int32_t> freePreviousPosition;
+	/** @brief Free movement: whether the player moved freely during the current game tick. */
+	bool freeMovedThisTick;
+	/**
 	 * @brief Free movement: freeOffset at the start of the current tile based walk. It shrinks to nothing during the walk.
 	 */
 	DisplacementOf<int16_t> freeWalkResidual;

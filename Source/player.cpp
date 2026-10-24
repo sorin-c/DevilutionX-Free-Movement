@@ -1175,6 +1175,7 @@ bool MoveFreely(Player &player, DisplacementOf<int32_t> step)
 		if (allowed == from)
 			continue;
 		SetFreePosition(player, allowed);
+		player.freeMovedThisTick = true;
 		return true;
 	}
 	return false;
@@ -1262,6 +1263,8 @@ void StopFreeMovement(Player &player)
 
 void ProcessFreeMovement(Player &player)
 {
+	player.freePreviousPosition = GetFreePosition(player);
+	player.freeMovedThisTick = false;
 	if (!player.freeMoving)
 		return;
 	if (player.destAction != ACTION_NONE || player.walkpath[0] != WALK_NONE) {
@@ -2745,6 +2748,7 @@ void InitPlayer(Player &player, bool firstTime)
 		player.destAction = ACTION_NONE;
 		player.freeOffset = {};
 		player.freeMoving = false;
+		player.freeMovedThisTick = false;
 
 		if (&player == MyPlayer) {
 			player.lightId = AddLight(player.position.tile, player._pLightRad);
@@ -2848,6 +2852,12 @@ Displacement GetFreeMovementRenderingOffset(const Player &player)
 	if (player.isWalking()) {
 		const int remaining = AnimationInfo::baseValueFraction - player.AnimInfo.getAnimationProgress();
 		offset = { player.freeWalkResidual.deltaX * remaining / AnimationInfo::baseValueFraction, player.freeWalkResidual.deltaY * remaining / AnimationInfo::baseValueFraction };
+	} else if (player.freeMovedThisTick) {
+		// The position only changes once per game tick (20 times a second). Draw the player on their way from the
+		// position at the start of the tick, so they move smoothly at any frame rate.
+		const DisplacementOf<int32_t> toPrevious = player.freePreviousPosition - GetFreePosition(player);
+		const int remaining = AnimationInfo::baseValueFraction - ProgressToNextGameTick;
+		offset += DisplacementOf<int32_t> { toPrevious.deltaX * remaining / AnimationInfo::baseValueFraction, toPrevious.deltaY * remaining / AnimationInfo::baseValueFraction };
 	}
 	// One tile along x is { 32, 16 } on screen, one tile along y is { -32, 16 }
 	return { (offset.deltaX - offset.deltaY) * 32 / FreeMovementUnitsPerTile, (offset.deltaX + offset.deltaY) * 16 / FreeMovementUnitsPerTile };
