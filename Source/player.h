@@ -333,6 +333,8 @@ struct Player {
 	bool freeMoving;
 	/** @brief Free movement: whether the walking animation for free movement is playing. */
 	bool freeAnimating;
+	/** @brief Free movement: how far through its cycle the walking animation is, in 1/FreeMovementAnimationCycle. */
+	uint16_t freeAnimationPhase;
 	Direction _pdir; // Direction faced by player (direction enum)
 	HeroClass _pClass;
 

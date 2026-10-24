@@ -1261,6 +1261,75 @@ void StopFreeMovement(Player &player)
 		StartStand(player, player._pdir);
 }
 
+/** @brief Resolution of Player::freeAnimationPhase. */
+constexpr int FreeMovementAnimationCycle = 4096;
+
+/**
+ * @brief Distance the walking animation covers in one cycle, in FreeMovementUnitsPerTile.
+ *
+ * The animation shows one tile based step. Facing a corner of the tile on screen, that step goes along a side of the
+ * tile. Facing the screen's edges, it goes across a corner of the tile, which is about 1.41 times as far.
+ */
+int GetWalkAnimationStride(Direction dir)
+{
+	const Displacement step { dir };
+	if (step.deltaX != 0 && step.deltaY != 0)
+		return FreeMovementUnitsPerTile * 1414 / 1000;
+	return FreeMovementUnitsPerTile;
+}
+
+/**
+ * @brief Checks whether a movement is within 30 degrees of a direction.
+ *
+ * The 8 directions are 45 degrees apart, so this lets the player keep facing a direction for 7.5 degrees past the
+ * border to the next one. Movement close to the border then doesn't make the sprite flicker between two directions.
+ */
+bool IsMovingAlmostInDirection(DisplacementOf<int32_t> movement, int length, Direction dir)
+{
+	const Displacement unit { dir };
+	const int64_t dotProduct = (static_cast<int64_t>(movement.deltaX) * unit.deltaX) + (static_cast<int64_t>(movement.deltaY) * unit.deltaY);
+	const int64_t unitLength = unit.deltaX != 0 && unit.deltaY != 0 ? 1414 : 1000;
+	// dotProduct / (length * unitLength / 1000) >= cos(30 degrees)
+	return dotProduct * 1000 * 1000 >= 866 * static_cast<int64_t>(length) * unitLength;
+}
+
+int GetFreeMovementLength(DisplacementOf<int32_t> movement)
+{
+	return static_cast<int>(std::sqrt((static_cast<double>(movement.deltaX) * movement.deltaX) + (static_cast<double>(movement.deltaY) * movement.deltaY)));
+}
+
+/**
+ * @brief Picks the sprite direction that fits the movement best, but keeps the current one while it still fits well enough.
+ */
+Direction GetFreeMovementDirection(const Player &player, DisplacementOf<int32_t> movement, int length)
+{
+	// Tiny movements, like the last bit before a waypoint, don't say much about where the player is going.
+	if (length < FreeMovementUnitsPerTile / 32 || IsMovingAlmostInDirection(movement, length, player._pdir))
+		return player._pdir;
+	return GetDirection({ 0, 0 }, { movement.deltaX, movement.deltaY });
+}
+
+/**
+ * @brief Plays the walking animation as fast as the player moves, so their feet keep pace with the ground.
+ */
+void AdvanceFreeWalkAnimation(Player &player, int movedDistance)
+{
+	AnimationInfo &animation = player.AnimInfo;
+	const int frames = std::max<int>(animation.numberOfFrames, 1);
+	const int oldFrame = player.freeAnimationPhase * frames / FreeMovementAnimationCycle;
+	const int phase = player.freeAnimationPhase + (movedDistance * FreeMovementAnimationCycle / GetWalkAnimationStride(player._pdir));
+	player.freeAnimationPhase = static_cast<uint16_t>(phase % FreeMovementAnimationCycle);
+	const int newFrame = player.freeAnimationPhase * frames / FreeMovementAnimationCycle;
+	animation.currentFrame = static_cast<int8_t>(newFrame);
+	animation.tickCounterOfCurrentFrame = 0;
+
+	// A cycle has two footsteps, at its start and in its middle.
+	const int halfCycle = std::max(frames / 2, 1);
+	const bool footstep = newFrame / halfCycle != oldFrame / halfCycle || phase >= FreeMovementAnimationCycle;
+	if (footstep && *GetOptions().Audio.walkingSound && (leveltype != DTYPE_TOWN || sgGameInitInfo.bRunInTown == 0))
+		PlaySfxLoc(SfxID::Walk, player.position.tile);
+}
+
 void ProcessFreeMovement(Player &player)
 {
 	player.freePreviousPosition = GetFreePosition(player);
@@ -1281,7 +1350,7 @@ void ProcessFreeMovement(Player &player)
 		player.freeWaypointIndex++;
 	const bool lastWaypoint = player.freeWaypointIndex >= player.freeWaypointCount;
 	const DisplacementOf<int32_t> toWaypoint = GetFreeWaypoint(player, player.freeWaypointIndex) - position;
-	const int distance = static_cast<int>(std::sqrt(static_cast<double>(toWaypoint.deltaX) * toWaypoint.deltaX + static_cast<double>(toWaypoint.deltaY) * toWaypoint.deltaY));
+	const int distance = GetFreeMovementLength(toWaypoint);
 	const int speed = GetFreeMovementSpeed(player);
 	const bool arriving = distance <= speed;
 	const DisplacementOf<int32_t> step = arriving ? toWaypoint : DisplacementOf<int32_t> { toWaypoint.deltaX * speed / distance, toWaypoint.deltaY * speed / distance };
@@ -1293,19 +1362,19 @@ void ProcessFreeMovement(Player &player)
 	if (arriving)
 		player.freeWaypointIndex++;
 
-	const Direction dir = GetDirection({ 0, 0 }, { toWaypoint.deltaX, toWaypoint.deltaY });
+	// Face the way the player actually moved, which differs from the way to the waypoint when sliding along a wall
+	const DisplacementOf<int32_t> moved = GetFreePosition(player) - position;
+	const int movedDistance = GetFreeMovementLength(moved);
+	const Direction dir = GetFreeMovementDirection(player, moved, movedDistance);
 	if (!player.freeAnimating) {
 		NewPlrAnim(player, player_graphic::Walk, dir);
 		player.freeAnimating = true;
-	} else if (!HeadlessMode) {
+		player.freeAnimationPhase = 0;
+	} else if (!HeadlessMode && dir != player._pdir) {
 		player.AnimInfo.sprites = player.AnimationData[static_cast<size_t>(player_graphic::Walk)].spritesForDirection(dir);
 	}
 	player._pdir = dir;
-
-	if (*GetOptions().Audio.walkingSound && (leveltype != DTYPE_TOWN || sgGameInitInfo.bRunInTown == 0)) {
-		if (player.AnimInfo.tickCounterOfCurrentFrame == 0 && (player.AnimInfo.currentFrame == 0 || player.AnimInfo.currentFrame == 4))
-			PlaySfxLoc(SfxID::Walk, player.position.tile);
-	}
+	AdvanceFreeWalkAnimation(player, movedDistance);
 }
 
 void CheckNewPath(Player &player, bool pmWillBeCalled)
@@ -3331,7 +3400,9 @@ void ProcessPlayers()
 			} while (tplayer);
 
 			player.previewCelSprite = std::nullopt;
-			if (player._pmode != PM_DEATH || player.AnimInfo.tickCounterOfCurrentFrame != 40)
+			// Free movement already moved the walking animation along with the player
+			const bool animatedByFreeMovement = player.freeMovedThisTick && player.freeAnimating && player._pmode == PM_STAND;
+			if (!animatedByFreeMovement && (player._pmode != PM_DEATH || player.AnimInfo.tickCounterOfCurrentFrame != 40))
 				player.AnimInfo.processAnimation();
 		}
 	}
