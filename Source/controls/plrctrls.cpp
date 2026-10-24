@@ -1818,6 +1818,13 @@ void WalkInDir(Player &player, AxisDirection dir)
 		return;
 	}
 
+	// Free movement turns the player towards where they actually go. Turning them here to one of the 8 directions of
+	// the stick would show the walking animation facing the wrong way.
+	if (*GetOptions().Gameplay.freeMovement && !IsStandingGround()) {
+		WalkFreelyInDir(player, dir);
+		return;
+	}
+
 	const Direction pdir = FaceDir[static_cast<std::size_t>(dir.x)][static_cast<std::size_t>(dir.y)];
 
 	if (!player.isWalking() && player.CanChangeAction())
@@ -1826,11 +1833,6 @@ void WalkInDir(Player &player, AxisDirection dir)
 	if (IsStandingGround()) {
 		if (player._pmode == PM_STAND)
 			StartStand(player, pdir);
-		return;
-	}
-
-	if (*GetOptions().Gameplay.freeMovement) {
-		WalkFreelyInDir(player, dir);
 		return;
 	}
 

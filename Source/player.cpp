@@ -1370,7 +1370,7 @@ void ProcessFreeMovement(Player &player)
 		NewPlrAnim(player, player_graphic::Walk, dir);
 		player.freeAnimating = true;
 		player.freeAnimationPhase = 0;
-	} else if (!HeadlessMode && dir != player._pdir) {
+	} else if (!HeadlessMode) {
 		player.AnimInfo.sprites = player.AnimationData[static_cast<size_t>(player_graphic::Walk)].spritesForDirection(dir);
 	}
 	player._pdir = dir;
