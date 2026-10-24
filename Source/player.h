@@ -321,6 +321,11 @@ struct Player {
 	 */
 	PointOf<int32_t> freeTarget;
 	/**
+	 * @brief Free movement: the direction the player keeps walking in, scaled to FreeWalkDirectionLength, or nothing
+	 * when walking towards freeTarget.
+	 */
+	DisplacementOf<int16_t> freeWalkDirection;
+	/**
 	 * @brief Free movement: tiles to pass through on the way to freeTarget, when obstacles block the straight line.
 	 * The player cuts corners between them where the way is clear.
 	 */
@@ -1015,6 +1020,16 @@ PointOf<int32_t> GetFreePosition(const Player &player);
  * @param target Where to move to, in FreeMovementUnitsPerTile. Moving to the player's own position stops.
  */
 void StartFreeMovement(Player &player, PointOf<int32_t> target);
+
+/** @brief Length of the direction passed to StartFreeWalkInDirection. */
+constexpr int FreeWalkDirectionLength = 1024;
+
+/**
+ * @brief Starts free movement in a direction, which goes on until stopped. This is how a controller's stick walks.
+ * @param player The player to move
+ * @param direction The direction scaled to a length of FreeWalkDirectionLength, or nothing to stop
+ */
+void StartFreeWalkInDirection(Player &player, DisplacementOf<int16_t> direction);
 
 /**
  * @brief Screen space offset for drawing the player, because of free movement.

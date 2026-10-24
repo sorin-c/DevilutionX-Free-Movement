@@ -1795,33 +1795,45 @@ void WalkFreelyInDir(const Player &player, AxisDirection dir)
 	if (length <= 0)
 		return;
 
-	// Aim a little ahead of the player, so walking continues smoothly until the stick is released
-	constexpr float Lookahead = 2.F * FreeMovementUnitsPerTile;
-	const PointOf<int32_t> target = GetFreePosition(player) + DisplacementOf<int32_t> { static_cast<int32_t>(worldX / length * Lookahead), static_cast<int32_t>(worldY / length * Lookahead) };
+	const DisplacementOf<int16_t> direction {
+		static_cast<int16_t>(std::lround(worldX / length * FreeWalkDirectionLength)),
+		static_cast<int16_t>(std::lround(worldY / length * FreeWalkDirectionLength)),
+	};
 
-	// Only resend when the direction changes noticeably, to keep the number of network messages down
-	if (player.freeMoving) {
-		const DisplacementOf<int32_t> change = target - player.freeTarget;
-		if (std::abs(change.deltaX) + std::abs(change.deltaY) < FreeMovementUnitsPerTile / 2)
+	// Resend whenever the direction changes by more than about 2 degrees, so the player turns with the stick
+	if (player.freeMoving && player.freeWalkDirection != DisplacementOf<int16_t> {}) {
+		const DisplacementOf<int16_t> change = direction - player.freeWalkDirection;
+		if (std::abs(change.deltaX) + std::abs(change.deltaY) < FreeWalkDirectionLength / 32)
 			return;
 	}
-	NetSendCmdFreeMove(target);
+	NetSendCmdFreeWalkInDirection(direction);
+}
+
+/** @brief How far the stick needs to be pushed to walk with free movement. Lower than StickDirectionThreshold, so walking starts sooner. */
+constexpr float FreeWalkStickThreshold = 0.2F;
+
+bool IsLeftStickPushedForFreeWalking()
+{
+	return (leftStickX * leftStickX) + (leftStickY * leftStickY) >= FreeWalkStickThreshold * FreeWalkStickThreshold;
 }
 
 void WalkInDir(Player &player, AxisDirection dir)
 {
-	if (dir.x == AxisDirectionX_NONE && dir.y == AxisDirectionY_NONE) {
-		if (ControlMode != ControlTypes::KeyboardAndMouse && player.walkpath[0] != WALK_NONE && player.destAction == ACTION_NONE)
-			NetSendCmdLoc(player.getId(), true, CMD_WALKXY, player.position.future); // Stop walking
-		if (ControlMode != ControlTypes::KeyboardAndMouse && player.freeMoving)
-			NetSendCmdFreeMove(GetFreePosition(player)); // Stop walking
-		return;
-	}
+	const bool noDirection = dir.x == AxisDirectionX_NONE && dir.y == AxisDirectionY_NONE;
 
 	// Free movement turns the player towards where they actually go. Turning them here to one of the 8 directions of
 	// the stick would show the walking animation facing the wrong way.
-	if (*GetOptions().Gameplay.freeMovement && !IsStandingGround()) {
+	const bool walking = !noDirection || (ControlMode != ControlTypes::KeyboardAndMouse && IsLeftStickPushedForFreeWalking());
+	if (*GetOptions().Gameplay.freeMovement && walking && !IsStandingGround()) {
 		WalkFreelyInDir(player, dir);
+		return;
+	}
+
+	if (noDirection) {
+		if (ControlMode != ControlTypes::KeyboardAndMouse && player.walkpath[0] != WALK_NONE && player.destAction == ACTION_NONE)
+			NetSendCmdLoc(player.getId(), true, CMD_WALKXY, player.position.future); // Stop walking
+		if (player.freeMoving && player.freeWalkDirection != DisplacementOf<int16_t> {})
+			NetSendCmdFreeWalkInDirection({}); // Stop walking
 		return;
 	}
 
@@ -1831,6 +1843,8 @@ void WalkInDir(Player &player, AxisDirection dir)
 		player._pdir = pdir;
 
 	if (IsStandingGround()) {
+		if (player.freeMoving && player.freeWalkDirection != DisplacementOf<int16_t> {})
+			NetSendCmdFreeWalkInDirection({}); // Stop walking
 		if (player._pmode == PM_STAND)
 			StartStand(player, pdir);
 		return;

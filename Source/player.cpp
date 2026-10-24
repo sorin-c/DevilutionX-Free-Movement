@@ -1257,6 +1257,7 @@ void SkipReachableWaypoints(Player &player, PointOf<int32_t> position)
 void StopFreeMovement(Player &player)
 {
 	player.freeMoving = false;
+	player.freeWalkDirection = {};
 	if (player.freeAnimating && player._pmode == PM_STAND)
 		StartStand(player, player._pdir);
 }
@@ -1339,12 +1340,20 @@ void ProcessFreeMovement(Player &player)
 	if (player.destAction != ACTION_NONE || player.walkpath[0] != WALK_NONE) {
 		// Another action took over
 		player.freeMoving = false;
+		player.freeWalkDirection = {};
 		return;
 	}
 	if (player._pmode != PM_STAND)
 		return; // Continue once the current action, like a tile based step or getting hit, is over
 
 	const PointOf<int32_t> position = GetFreePosition(player);
+	if (player.freeWalkDirection != DisplacementOf<int16_t> {}) {
+		// Keep a target ahead of the player, so they walk on until stopped
+		constexpr int Lookahead = 2 * FreeMovementUnitsPerTile;
+		player.freeTarget = position + DisplacementOf<int32_t> { player.freeWalkDirection.deltaX * Lookahead / FreeWalkDirectionLength, player.freeWalkDirection.deltaY * Lookahead / FreeWalkDirectionLength };
+		player.freeWaypointCount = 0;
+		player.freeWaypointIndex = 0;
+	}
 	SkipReachableWaypoints(player, position);
 	while (player.freeWaypointIndex < player.freeWaypointCount && GetFreeWaypoint(player, player.freeWaypointIndex) == position)
 		player.freeWaypointIndex++;
@@ -2818,6 +2827,7 @@ void InitPlayer(Player &player, bool firstTime)
 		player.freeOffset = {};
 		player.freeMoving = false;
 		player.freeMovedThisTick = false;
+		player.freeWalkDirection = {};
 
 		if (&player == MyPlayer) {
 			player.lightId = AddLight(player.position.tile, player._pLightRad);
@@ -2907,11 +2917,25 @@ void StartFreeMovement(Player &player, PointOf<int32_t> target)
 	ClrPlrPath(player);
 	player.destAction = ACTION_NONE;
 	player.freeTarget = target;
+	player.freeWalkDirection = {};
 	if (target == GetFreePosition(player)) {
 		StopFreeMovement(player);
 		return;
 	}
 	PlanFreePath(player);
+	player.freeMoving = true;
+}
+
+void StartFreeWalkInDirection(Player &player, DisplacementOf<int16_t> direction)
+{
+	if (direction == DisplacementOf<int16_t> {}) {
+		if (player.freeMoving)
+			StopFreeMovement(player);
+		return;
+	}
+	ClrPlrPath(player);
+	player.destAction = ACTION_NONE;
+	player.freeWalkDirection = direction;
 	player.freeMoving = true;
 }
 

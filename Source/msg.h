@@ -421,6 +421,11 @@ enum _cmd_id : uint8_t {
 	// body (TCmdParam2):
 	//    int16_t x, y: target point in 1/FreeMovementUnitsPerTile of a tile
 	CMD_FREEMOVE,
+	// Walk freely (not from tile to tile) in a direction until told otherwise.
+	//
+	// body (TCmdParam2):
+	//    int16_t x, y: direction scaled to a length of FreeWalkDirectionLength, or 0, 0 to stop
+	CMD_FREEWALKDIR,
 	// Fake command; set current player for succeeding mega pkt buffer messages.
 	//
 	// body (TFakeCmdPlr)
@@ -757,6 +762,11 @@ void NetSendCmdParam2(bool bHiPri, _cmd_id bCmd, uint16_t wParam1, uint16_t wPar
  * @param target The point in 1/FreeMovementUnitsPerTile of a tile
  */
 void NetSendCmdFreeMove(PointOf<int32_t> target);
+/**
+ * @brief Sends a request for the local player to walk freely (not from tile to tile) in a direction.
+ * @param direction The direction scaled to a length of FreeWalkDirectionLength, or nothing to stop
+ */
+void NetSendCmdFreeWalkInDirection(DisplacementOf<int16_t> direction);
 void NetSendCmdParam4(bool bHiPri, _cmd_id bCmd, uint16_t wParam1, uint16_t wParam2, uint16_t wParam3, uint16_t wParam4);
 void NetSendCmdQuest(bool bHiPri, const Quest &quest);
 void NetSendCmdGItem(bool bHiPri, _cmd_id bCmd, const Player &player, uint8_t ii);
