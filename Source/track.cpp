@@ -12,10 +12,14 @@
 #include "controls/game_controls.h"
 #include "controls/plrctrls.h"
 #include "cursor.h"
+#include "diablo.h"
 #include "engine/point.hpp"
+#include "engine/render/scrollrt.h"
 #include "levels/dun_tile_data.hpp"
 #include "monster.h"
+#include "msg.h"
 #include "objects.h"
+#include "options.h"
 #include "player.h"
 #include "stores.h"
 
@@ -82,23 +86,71 @@ bool IsMeleeAttackRedundant(const Player &player, Point targetPosition)
 
 void RepeatWalk(Player &player)
 {
+	if (*GetOptions().Gameplay.freeMovement) {
+		FreeWalkToMouse();
+		return;
+	}
+
 	if (!InDungeonBounds(cursPosition))
 		return;
 
-	if (player._pmode != PM_STAND && (!player.isWalking() || player.AnimInfo.getFrameToUseForRendering() <= 6))
+	// Update the destination while a step is still in progress, so the next step is already queued when the current
+	// one ends. Waiting for the last frames of the step makes the command arrive too late and the player stands still
+	// for a moment between steps.
+	if (player._pmode != PM_STAND && !player.isWalking())
 		return;
 
-	const Point target = player.GetTargetPosition();
-	if (cursPosition == target)
+	const Point destination = GetWalkDestination(player, cursPosition);
+	if (destination == player.GetTargetPosition())
 		return;
 
-	if (IsWalkingRequestRedundant(player, cursPosition))
+	if (IsWalkingRequestRedundant(player, destination))
 		return;
 
-	NetSendCmdLoc(MyPlayerId, true, CMD_WALKXY, cursPosition);
+	NetSendCmdLoc(MyPlayerId, true, CMD_WALKXY, destination);
 }
 
 } // namespace
+
+void FreeWalkToMouse()
+{
+	const Player &player = *MyPlayer;
+
+	// Where the player stands on the screen: the center of their tile, moved by any walking or free movement
+	Point playerOnScreen = GetScreenPosition(player.position.tile) + Displacement { TILE_WIDTH / 2, -TILE_HEIGHT / 2 } + GetFreeMovementRenderingOffset(player);
+	if (player.isWalking())
+		playerOnScreen += GetOffsetForWalking(player.AnimInfo, player._pdir);
+	Displacement toMouse = MousePosition - playerOnScreen;
+	if (*GetOptions().Graphics.zoom)
+		toMouse = Point { MousePosition.x / 2, MousePosition.y / 2 } - playerOnScreen;
+
+	// Invert the projection of tiles to the screen: one tile along x is { 32, 16 } on screen, one tile along y { -32, 16 }
+	const DisplacementOf<int32_t> worldOffset {
+		(toMouse.deltaX * FreeMovementUnitsPerTile / TILE_WIDTH) + (toMouse.deltaY * FreeMovementUnitsPerTile / TILE_HEIGHT),
+		(toMouse.deltaY * FreeMovementUnitsPerTile / TILE_HEIGHT) - (toMouse.deltaX * FreeMovementUnitsPerTile / TILE_WIDTH),
+	};
+	PointOf<int32_t> target = GetFreePosition(player) + worldOffset;
+	constexpr int32_t MaxCoordinate = (MAXDUNX - 1) * FreeMovementUnitsPerTile;
+	target = { std::clamp(target.x, 0, MaxCoordinate), std::clamp(target.y, 0, MaxCoordinate) };
+
+	if (player.freeMoving && player.freeTarget == target)
+		return;
+	NetSendCmdFreeMove(target);
+}
+
+Point GetWalkDestination(const Player &player, Point clickedTile)
+{
+	const Point start = player.position.future;
+	const Displacement delta = clickedTile - start;
+	const int length = start.WalkingDistance(clickedTile);
+	// Go back along the line from the clicked tile towards the player until a tile can be walked on.
+	for (int i = length; i > 0; i--) {
+		const Point tile = start + Displacement { delta.deltaX * i / length, delta.deltaY * i / length };
+		if (PosOkPlayer(player, tile))
+			return tile;
+	}
+	return clickedTile;
+}
 
 void InvalidateTargets()
 {
@@ -142,7 +194,8 @@ void RepeatPlayerAction()
 		return;
 	if (myPlayer._pInvincible)
 		return;
-	if (!myPlayer.CanChangeAction())
+	// Walking can change its destination during a step, see RepeatWalk.
+	if (LastPlayerAction != PlayerActionType::Walk && !myPlayer.CanChangeAction())
 		return;
 
 	const bool rangedAttack = myPlayer.UsesRangedWeapon();

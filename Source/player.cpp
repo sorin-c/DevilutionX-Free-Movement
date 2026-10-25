@@ -162,6 +162,11 @@ void StartWalk(Player &player, Direction dir, bool pmWillBeCalled)
 
 	StartWalkAnimation(player, dir, pmWillBeCalled);
 	HandleWalkMode(player, dir);
+	if (player.isWalking()) {
+		// Start from wherever free movement left the player, and reach the center of the next tile by the end of the step
+		player.freeWalkResidual = player.freeOffset;
+		player.freeOffset = {};
+	}
 }
 
 void ClearStateVariables(Player &player)
@@ -1081,6 +1086,349 @@ void TryDisarm(const Player &player, Object &object)
 	}
 }
 
+/** @brief How close free movement gets to a tile that can't be walked on, from the center of the player's tile. */
+constexpr int FreeMovementWallDistance = FreeMovementUnitsPerTile / 4;
+
+/**
+ * @brief Game ticks per step of continuous tile based walking.
+ *
+ * Each following step starts on the walking animation's frame -1 (frame 3 when running in town), see
+ * StartWalkAnimation, and ends when the animation reaches its last frame.
+ */
+int GetTicksPerWalkStep(const Player &player)
+{
+	int ticksPerStep = player._pWFrames;
+	if (leveltype == DTYPE_TOWN && sgGameInitInfo.bRunInTown != 0)
+		ticksPerStep = player._pWFrames - 4;
+	return std::max(ticksPerStep, 1);
+}
+
+/**
+ * @brief Ratios of the smaller to the larger of a movement's x and y distances (in 1/1024) where free movement reaches
+ * the speed of the nearest of the 8 tile based directions.
+ *
+ * Movement within 5 degrees on screen of a direction along a tile's side (diagonal on screen) has a ratio below
+ * FreeMovementSideRatio. Movement within 5 degrees on screen of a direction across a tile's corner (left, right, up or
+ * down on screen) has a ratio above FreeMovementCornerRatio.
+ */
+constexpr int32_t FreeMovementSideRatio = 105;
+constexpr int32_t FreeMovementCornerRatio = 719;
+
+/**
+ * @brief Free movement speed along a tile's side (diagonal on screen), in percent of tile based walking.
+ *
+ * Tile based walking crosses a tile's corner (left, right, up or down on screen) about 1.41 times as fast as it walks
+ * along a tile's side. Free movement narrows that gap.
+ */
+constexpr int FreeMovementSideSpeedPercent = 125;
+
+/**
+ * @brief Gets how far free movement goes towards a point in one game tick.
+ *
+ * Tile based walking takes one step per tile, both along a tile's side and across its corner, so reaching a point
+ * takes as many steps as the larger of the distances along x and y, and it covers sqrt(1 + ratio^2) tiles per step,
+ * with ratio being the smaller distance divided by the larger. Free movement follows the same curve, but starts at
+ * FreeMovementSideSpeedPercent along a tile's side. Within 5 degrees on screen of one of the 8 directions it uses
+ * exactly that direction's speed, so aiming a little off doesn't slow the player down.
+ */
+DisplacementOf<int32_t> GetFreeMovementStep(const Player &player, DisplacementOf<int32_t> toTarget)
+{
+	const int32_t larger = std::max(std::abs(toTarget.deltaX), std::abs(toTarget.deltaY));
+	if (larger == 0)
+		return toTarget;
+	const int32_t smaller = std::min(std::abs(toTarget.deltaX), std::abs(toTarget.deltaY));
+	const int32_t ratio = smaller * 1024 / larger;
+	const double snappedRatio = std::clamp<int32_t>((ratio - FreeMovementSideRatio) * 1024 / (FreeMovementCornerRatio - FreeMovementSideRatio), 0, 1024) / 1024.0;
+	constexpr double SideTilesPerStep = FreeMovementSideSpeedPercent / 100.0;
+	constexpr double CornerTilesPerStep = 1.4142135623730951;
+	// 0 along a tile's side, 1 across its corner, in between like tile based walking
+	const double towardsCorner = (std::sqrt(1.0 + (snappedRatio * snappedRatio)) - 1.0) / (CornerTilesPerStep - 1.0);
+	const double tilesPerStep = SideTilesPerStep + ((CornerTilesPerStep - SideTilesPerStep) * towardsCorner);
+	const double unitsPerTick = FreeMovementUnitsPerTile * tilesPerStep / GetTicksPerWalkStep(player);
+
+	const double distance = std::sqrt((static_cast<double>(toTarget.deltaX) * toTarget.deltaX) + (static_cast<double>(toTarget.deltaY) * toTarget.deltaY));
+	if (distance <= unitsPerTick)
+		return toTarget;
+	return { static_cast<int32_t>(std::lround(toTarget.deltaX * unitsPerTick / distance)), static_cast<int32_t>(std::lround(toTarget.deltaY * unitsPerTick / distance)) };
+}
+
+Point GetTileOfFreePosition(PointOf<int32_t> position)
+{
+	return { (position.x + FreeMovementUnitsPerTile / 2) / FreeMovementUnitsPerTile, (position.y + FreeMovementUnitsPerTile / 2) / FreeMovementUnitsPerTile };
+}
+
+bool CanFreeMoveBetween(const Player &player, Point from, Point to)
+{
+	if (from == to)
+		return true;
+	if (std::abs(to.x - from.x) > 1 || std::abs(to.y - from.y) > 1)
+		return false;
+	return PosOkPlayer(player, to) && CanStep(from, to);
+}
+
+/**
+ * @brief Keeps the player from walking into the parts of their tile that border tiles they can't enter.
+ */
+DisplacementOf<int16_t> KeepAwayFromObstacles(const Player &player, Point tile, DisplacementOf<int32_t> offset)
+{
+	const auto clampAxis = [&](int32_t value, Displacement step) {
+		if (value > FreeMovementWallDistance && !PosOkPlayer(player, tile + step))
+			return FreeMovementWallDistance;
+		if (value < -FreeMovementWallDistance && !PosOkPlayer(player, tile - step))
+			return -FreeMovementWallDistance;
+		return static_cast<int>(value);
+	};
+	return { static_cast<int16_t>(clampAxis(offset.deltaX, { 1, 0 })), static_cast<int16_t>(clampAxis(offset.deltaY, { 0, 1 })) };
+}
+
+void SetFreePosition(Player &player, PointOf<int32_t> position)
+{
+	const Point tile = GetTileOfFreePosition(position);
+	if (tile != player.position.tile) {
+		dPlayer[player.position.tile.x][player.position.tile.y] = 0;
+		player.position.tile = tile;
+		player.occupyTile(tile, false);
+		SetPlayerOld(player);
+		FixPlayerLocation(player, player._pdir);
+		AutoPickup(player);
+	}
+	const DisplacementOf<int32_t> offset = position - PointOf<int32_t> { tile.x * FreeMovementUnitsPerTile, tile.y * FreeMovementUnitsPerTile };
+	player.freeOffset = { static_cast<int16_t>(offset.deltaX), static_cast<int16_t>(offset.deltaY) };
+	if (player.lightId != NO_LIGHT) {
+		const Displacement screenOffset = GetFreeMovementRenderingOffset(player);
+		ChangeLightOffset(player.lightId, WorldTileDisplacement { static_cast<int8_t>(screenOffset.deltaX), static_cast<int8_t>(screenOffset.deltaY) }.screenToLight());
+	}
+}
+
+/**
+ * @brief Moves the player by the given amount, sliding along obstacles when the way is blocked.
+ * @return Whether the player moved at all
+ */
+bool MoveFreely(Player &player, DisplacementOf<int32_t> step)
+{
+	const PointOf<int32_t> from = GetFreePosition(player);
+	const DisplacementOf<int32_t> candidates[] = { step, { step.deltaX, 0 }, { 0, step.deltaY } };
+	for (const DisplacementOf<int32_t> &candidate : candidates) {
+		if (candidate == DisplacementOf<int32_t> {})
+			continue;
+		const PointOf<int32_t> to = from + candidate;
+		const Point tile = GetTileOfFreePosition(to);
+		if (!CanFreeMoveBetween(player, player.position.tile, tile))
+			continue;
+		const DisplacementOf<int16_t> offset = KeepAwayFromObstacles(player, tile, to - PointOf<int32_t> { tile.x * FreeMovementUnitsPerTile, tile.y * FreeMovementUnitsPerTile });
+		const PointOf<int32_t> allowed { tile.x * FreeMovementUnitsPerTile + offset.deltaX, tile.y * FreeMovementUnitsPerTile + offset.deltaY };
+		if (allowed == from)
+			continue;
+		SetFreePosition(player, allowed);
+		player.freeMovedThisTick = true;
+		return true;
+	}
+	return false;
+}
+
+PointOf<int32_t> GetFreePositionOfTile(Point tile)
+{
+	return { tile.x * FreeMovementUnitsPerTile, tile.y * FreeMovementUnitsPerTile };
+}
+
+/**
+ * @brief Checks whether the player can move in a straight line between two points without hitting an obstacle.
+ */
+bool IsFreeLineClear(const Player &player, PointOf<int32_t> from, PointOf<int32_t> to)
+{
+	// Samples are closer together than a tile, so the line can't skip a tile.
+	constexpr int SampleDistance = FreeMovementUnitsPerTile / 8;
+	const DisplacementOf<int32_t> delta = to - from;
+	const int samples = (std::max(std::abs(delta.deltaX), std::abs(delta.deltaY)) / SampleDistance) + 1;
+	Point tile = GetTileOfFreePosition(from);
+	for (int i = 1; i <= samples; i++) {
+		const Point next = GetTileOfFreePosition(from + DisplacementOf<int32_t> { delta.deltaX * i / samples, delta.deltaY * i / samples });
+		if (!CanFreeMoveBetween(player, tile, next))
+			return false;
+		tile = next;
+	}
+	return true;
+}
+
+/** @brief How many waypoints ahead free movement looks for a straight line to cut a corner. */
+constexpr int FreeMovementWaypointLookahead = 8;
+
+PointOf<int32_t> GetFreeWaypoint(const Player &player, int index)
+{
+	if (index >= player.freeWaypointCount)
+		return player.freeTarget;
+	return GetFreePositionOfTile(player.freeWaypoints[index]);
+}
+
+/**
+ * @brief Finds the tiles to walk through when obstacles are in the way of freeTarget.
+ */
+void PlanFreePath(Player &player)
+{
+	player.freeWaypointCount = 0;
+	player.freeWaypointIndex = 0;
+	if (IsFreeLineClear(player, GetFreePosition(player), player.freeTarget))
+		return;
+
+	int8_t steps[MaxPathLengthPlayer];
+	const auto posOk = [&player](Point position) { return PosOkPlayer(player, position); };
+	const int length = FindPath(CanStep, posOk, player.position.tile, GetTileOfFreePosition(player.freeTarget), steps, MaxPathLengthPlayer);
+	Point tile = player.position.tile;
+	for (int i = 0; i < length; i++) {
+		tile += GetPathStepDisplacement(steps[i]);
+		player.freeWaypoints[i] = tile;
+	}
+	// The destination can be a tile the player can't enter, like a wall that was clicked. The player then gets as close as possible.
+	int count = length;
+	while (count > 0 && !PosOkPlayer(player, player.freeWaypoints[count - 1]))
+		count--;
+	player.freeWaypointCount = static_cast<uint8_t>(count);
+}
+
+/**
+ * @brief Moves on to the furthest of the next few waypoints that can be reached in a straight line, so the player cuts corners.
+ */
+void SkipReachableWaypoints(Player &player, PointOf<int32_t> position)
+{
+	const int last = std::min<int>(player.freeWaypointCount, player.freeWaypointIndex + FreeMovementWaypointLookahead);
+	for (int index = last; index > player.freeWaypointIndex; index--) {
+		if (IsFreeLineClear(player, position, GetFreeWaypoint(player, index))) {
+			player.freeWaypointIndex = static_cast<uint8_t>(index);
+			return;
+		}
+	}
+}
+
+void StopFreeMovement(Player &player)
+{
+	player.freeMoving = false;
+	player.freeWalkDirection = {};
+	if (player.freeAnimating && player._pmode == PM_STAND)
+		StartStand(player, player._pdir);
+}
+
+/** @brief Resolution of Player::freeAnimationPhase. */
+constexpr int FreeMovementAnimationCycle = 4096;
+
+/**
+ * @brief Distance the walking animation covers in one cycle, in FreeMovementUnitsPerTile.
+ *
+ * The animation shows one tile based step. Facing a corner of the tile on screen, that step goes along a side of the
+ * tile. Facing the screen's edges, it goes across a corner of the tile, which is about 1.41 times as far.
+ */
+int GetWalkAnimationStride(Direction dir)
+{
+	const Displacement step { dir };
+	if (step.deltaX != 0 && step.deltaY != 0)
+		return FreeMovementUnitsPerTile * 1414 / 1000;
+	return FreeMovementUnitsPerTile;
+}
+
+/**
+ * @brief Checks whether a movement is within 30 degrees of a direction.
+ *
+ * The 8 directions are 45 degrees apart, so this lets the player keep facing a direction for 7.5 degrees past the
+ * border to the next one. Movement close to the border then doesn't make the sprite flicker between two directions.
+ */
+bool IsMovingAlmostInDirection(DisplacementOf<int32_t> movement, int length, Direction dir)
+{
+	const Displacement unit { dir };
+	const int64_t dotProduct = (static_cast<int64_t>(movement.deltaX) * unit.deltaX) + (static_cast<int64_t>(movement.deltaY) * unit.deltaY);
+	const int64_t unitLength = unit.deltaX != 0 && unit.deltaY != 0 ? 1414 : 1000;
+	// dotProduct / (length * unitLength / 1000) >= cos(30 degrees)
+	return dotProduct * 1000 * 1000 >= 866 * static_cast<int64_t>(length) * unitLength;
+}
+
+int GetFreeMovementLength(DisplacementOf<int32_t> movement)
+{
+	return static_cast<int>(std::sqrt((static_cast<double>(movement.deltaX) * movement.deltaX) + (static_cast<double>(movement.deltaY) * movement.deltaY)));
+}
+
+/**
+ * @brief Picks the sprite direction that fits the movement best, but keeps the current one while it still fits well enough.
+ */
+Direction GetFreeMovementDirection(const Player &player, DisplacementOf<int32_t> movement, int length)
+{
+	// Tiny movements, like the last bit before a waypoint, don't say much about where the player is going.
+	if (length < FreeMovementUnitsPerTile / 32 || IsMovingAlmostInDirection(movement, length, player._pdir))
+		return player._pdir;
+	return GetDirection({ 0, 0 }, { movement.deltaX, movement.deltaY });
+}
+
+/**
+ * @brief Plays the walking animation as fast as the player moves, so their feet keep pace with the ground.
+ */
+void AdvanceFreeWalkAnimation(Player &player, int movedDistance)
+{
+	AnimationInfo &animation = player.AnimInfo;
+	const int frames = std::max<int>(animation.numberOfFrames, 1);
+	const int oldFrame = player.freeAnimationPhase * frames / FreeMovementAnimationCycle;
+	const int phase = player.freeAnimationPhase + (movedDistance * FreeMovementAnimationCycle / GetWalkAnimationStride(player._pdir));
+	player.freeAnimationPhase = static_cast<uint16_t>(phase % FreeMovementAnimationCycle);
+	const int newFrame = player.freeAnimationPhase * frames / FreeMovementAnimationCycle;
+	animation.currentFrame = static_cast<int8_t>(newFrame);
+	animation.tickCounterOfCurrentFrame = 0;
+
+	// A cycle has two footsteps, at its start and in its middle.
+	const int halfCycle = std::max(frames / 2, 1);
+	const bool footstep = newFrame / halfCycle != oldFrame / halfCycle || phase >= FreeMovementAnimationCycle;
+	if (footstep && *GetOptions().Audio.walkingSound && (leveltype != DTYPE_TOWN || sgGameInitInfo.bRunInTown == 0))
+		PlaySfxLoc(SfxID::Walk, player.position.tile);
+}
+
+void ProcessFreeMovement(Player &player)
+{
+	player.freePreviousPosition = GetFreePosition(player);
+	player.freeMovedThisTick = false;
+	if (!player.freeMoving)
+		return;
+	if (player.destAction != ACTION_NONE || player.walkpath[0] != WALK_NONE) {
+		// Another action took over
+		player.freeMoving = false;
+		player.freeWalkDirection = {};
+		return;
+	}
+	if (player._pmode != PM_STAND)
+		return; // Continue once the current action, like a tile based step or getting hit, is over
+
+	const PointOf<int32_t> position = GetFreePosition(player);
+	if (player.freeWalkDirection != DisplacementOf<int16_t> {}) {
+		// Keep a target ahead of the player, so they walk on until stopped
+		constexpr int Lookahead = 2 * FreeMovementUnitsPerTile;
+		player.freeTarget = position + DisplacementOf<int32_t> { player.freeWalkDirection.deltaX * Lookahead / FreeWalkDirectionLength, player.freeWalkDirection.deltaY * Lookahead / FreeWalkDirectionLength };
+		player.freeWaypointCount = 0;
+		player.freeWaypointIndex = 0;
+	}
+	SkipReachableWaypoints(player, position);
+	while (player.freeWaypointIndex < player.freeWaypointCount && GetFreeWaypoint(player, player.freeWaypointIndex) == position)
+		player.freeWaypointIndex++;
+	const bool lastWaypoint = player.freeWaypointIndex >= player.freeWaypointCount;
+	const DisplacementOf<int32_t> toWaypoint = GetFreeWaypoint(player, player.freeWaypointIndex) - position;
+	const DisplacementOf<int32_t> step = GetFreeMovementStep(player, toWaypoint);
+	const bool arriving = step == toWaypoint;
+
+	if (!MoveFreely(player, step) || (arriving && lastWaypoint)) {
+		StopFreeMovement(player);
+		return;
+	}
+	if (arriving)
+		player.freeWaypointIndex++;
+
+	// Face the way the player actually moved, which differs from the way to the waypoint when sliding along a wall
+	const DisplacementOf<int32_t> moved = GetFreePosition(player) - position;
+	const int movedDistance = GetFreeMovementLength(moved);
+	const Direction dir = GetFreeMovementDirection(player, moved, movedDistance);
+	if (!player.freeAnimating) {
+		NewPlrAnim(player, player_graphic::Walk, dir);
+		player.freeAnimating = true;
+		player.freeAnimationPhase = 0;
+	} else if (!HeadlessMode) {
+		player.AnimInfo.sprites = player.AnimationData[static_cast<size_t>(player_graphic::Walk)].spritesForDirection(dir);
+	}
+	player._pdir = dir;
+	AdvanceFreeWalkAnimation(player, movedDistance);
+}
+
 void CheckNewPath(Player &player, bool pmWillBeCalled)
 {
 	int x = 0;
@@ -1923,11 +2271,13 @@ void Player::UpdatePreviewCelSprite(_cmd_id cmdId, Point point, uint16_t wParam1
 
 	if (minimalWalkDistance >= 0 && position.future != point) {
 		int8_t testWalkPath[MaxPathLengthPlayer];
-		const int steps = FindPath(CanStep, [this](Point tile) { return PosOkPlayer(*this, tile); }, position.future, point, testWalkPath, MaxPathLengthPlayer);
+		const auto posOk = [this](Point tile) { return PosOkPlayer(*this, tile); };
+		const int steps = FindPath(CanStep, posOk, position.future, point, testWalkPath, MaxPathLengthPlayer);
 		if (steps == 0) {
 			// Can't walk to desired location => stand still
 			return;
 		}
+		StraightenPath(CanStep, posOk, position.future, testWalkPath, steps);
 		if (steps >= minimalWalkDistance) {
 			graphic = player_graphic::Walk;
 			switch (testWalkPath[0]) {
@@ -2208,6 +2558,7 @@ void ResetPlayerGFX(Player &player)
 void NewPlrAnim(Player &player, player_graphic graphic, Direction dir, AnimationDistributionFlags flags /*= AnimationDistributionFlags::None*/, int8_t numSkippedFrames /*= 0*/, int8_t distributeFramesBeforeFrame /*= 0*/)
 {
 	LoadPlrGFX(player, graphic);
+	player.freeAnimating = false;
 
 	OptionalClxSpriteList sprites;
 	int previewShownGameTickFragments = 0;
@@ -2516,6 +2867,10 @@ void InitPlayer(Player &player, bool firstTime)
 		SetPlayerOld(player);
 		player.walkpath[0] = WALK_NONE;
 		player.destAction = ACTION_NONE;
+		player.freeOffset = {};
+		player.freeMoving = false;
+		player.freeMovedThisTick = false;
+		player.freeWalkDirection = {};
 
 		if (&player == MyPlayer) {
 			player.lightId = AddLight(player.position.tile, player._pLightRad);
@@ -2593,6 +2948,55 @@ void StartStand(Player &player, Direction dir)
 	FixPlrWalkTags(player);
 	player.occupyTile(player.position.tile, false);
 	SetPlayerOld(player);
+}
+
+PointOf<int32_t> GetFreePosition(const Player &player)
+{
+	return { player.position.tile.x * FreeMovementUnitsPerTile + player.freeOffset.deltaX, player.position.tile.y * FreeMovementUnitsPerTile + player.freeOffset.deltaY };
+}
+
+void StartFreeMovement(Player &player, PointOf<int32_t> target)
+{
+	ClrPlrPath(player);
+	player.destAction = ACTION_NONE;
+	player.freeTarget = target;
+	player.freeWalkDirection = {};
+	if (target == GetFreePosition(player)) {
+		StopFreeMovement(player);
+		return;
+	}
+	PlanFreePath(player);
+	player.freeMoving = true;
+}
+
+void StartFreeWalkInDirection(Player &player, DisplacementOf<int16_t> direction)
+{
+	if (direction == DisplacementOf<int16_t> {}) {
+		if (player.freeMoving)
+			StopFreeMovement(player);
+		return;
+	}
+	ClrPlrPath(player);
+	player.destAction = ACTION_NONE;
+	player.freeWalkDirection = direction;
+	player.freeMoving = true;
+}
+
+Displacement GetFreeMovementRenderingOffset(const Player &player)
+{
+	DisplacementOf<int32_t> offset { player.freeOffset.deltaX, player.freeOffset.deltaY };
+	if (player.isWalking()) {
+		const int remaining = AnimationInfo::baseValueFraction - player.AnimInfo.getAnimationProgress();
+		offset = { player.freeWalkResidual.deltaX * remaining / AnimationInfo::baseValueFraction, player.freeWalkResidual.deltaY * remaining / AnimationInfo::baseValueFraction };
+	} else if (player.freeMovedThisTick) {
+		// The position only changes once per game tick (20 times a second). Draw the player on their way from the
+		// position at the start of the tick, so they move smoothly at any frame rate.
+		const DisplacementOf<int32_t> toPrevious = player.freePreviousPosition - GetFreePosition(player);
+		const int remaining = AnimationInfo::baseValueFraction - ProgressToNextGameTick;
+		offset += DisplacementOf<int32_t> { toPrevious.deltaX * remaining / AnimationInfo::baseValueFraction, toPrevious.deltaY * remaining / AnimationInfo::baseValueFraction };
+	}
+	// One tile along x is { 32, 16 } on screen, one tile along y is { -32, 16 }
+	return { (offset.deltaX - offset.deltaY) * 32 / FreeMovementUnitsPerTile, (offset.deltaX + offset.deltaY) * 16 / FreeMovementUnitsPerTile };
 }
 
 void StartPlrBlock(Player &player, Direction dir)
@@ -3025,6 +3429,8 @@ void ProcessPlayers()
 				}
 			}
 
+			ProcessFreeMovement(player);
+
 			bool tplayer = false;
 			do {
 				switch (player._pmode) {
@@ -3061,7 +3467,9 @@ void ProcessPlayers()
 			} while (tplayer);
 
 			player.previewCelSprite = std::nullopt;
-			if (player._pmode != PM_DEATH || player.AnimInfo.tickCounterOfCurrentFrame != 40)
+			// Free movement already moved the walking animation along with the player
+			const bool animatedByFreeMovement = player.freeMovedThisTick && player.freeAnimating && player._pmode == PM_STAND;
+			if (!animatedByFreeMovement && (player._pmode != PM_DEATH || player.AnimInfo.tickCounterOfCurrentFrame != 40))
 				player.AnimInfo.processAnimation();
 		}
 	}
@@ -3123,10 +3531,12 @@ void MakePlrPath(Player &player, Point targetPosition, bool endspace)
 		return;
 	}
 
-	int path = FindPath(CanStep, [&player](Point position) { return PosOkPlayer(player, position); }, player.position.future, targetPosition, player.walkpath, MaxPathLengthPlayer);
+	const auto posOk = [&player](Point position) { return PosOkPlayer(player, position); };
+	int path = FindPath(CanStep, posOk, player.position.future, targetPosition, player.walkpath, MaxPathLengthPlayer);
 	if (path == 0) {
 		return;
 	}
+	StraightenPath(CanStep, posOk, player.position.future, player.walkpath, path);
 
 	if (!endspace) {
 		path--;

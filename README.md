@@ -14,6 +14,47 @@
 
 <sub>*(The health-bar and XP-bar are off by default but can be enabled in the [game settings](https://github.com/diasurgical/DevilutionX/wiki/Config-File). Widescreen can also be disabled if preferred.)*</sub>
 
+# DevilutionX Free Movement
+
+This is a fork of DevilutionX that makes walking feel closer to Diablo II and Diablo III. Your hero is no longer locked to the tile grid: they walk smoothly in any direction with both mouse and controller.
+
+Turn it on in **Settings → Gameplay → Free Movement**. It is off by default. With it off, the game walks from tile to tile like regular DevilutionX.
+
+## Free Movement
+
+- **Walk in any direction.** The hero has an exact position inside each tile instead of jumping from tile to tile. They go straight toward where you point and turn right away, without first finishing a step.
+- **Mouse.** Click or hold the button and the hero walks straight to the cursor. If something is in the way, they walk around it and cut corners wherever the way is clear. They slide along walls instead of stopping.
+- **Controller.** The hero walks in the exact direction of the left stick, not just 8 directions.
+  - Walking starts at a light push of the stick.
+  - The hero turns with the stick in steps of about 2°.
+  - Releasing the stick stops the hero on the spot.
+- **Speed.**
+  - Left, right, up and down on screen keep the original walking speed.
+  - The four screen diagonals are 25% faster than the original, to even out the speeds a little.
+  - Within 5° of any of these 8 directions, the hero walks at that direction's full speed. Directions in between blend smoothly.
+- **Smooth drawing and animation.**
+  - The hero and the camera move smoothly at any frame rate, not just at the game's 20 updates per second.
+  - The walk animation plays as fast as the hero covers ground, so their feet don't slide.
+  - The hero faces the way they actually walk, without flickering between two directions.
+- **Original walking where it's needed.** Walking up to a monster, a townsperson, an item or a chest still goes tile by tile, starting from wherever the hero stands. With Free Movement on, those steps are drawn along a smooth line.
+
+## Always on
+
+These fixes apply whether or not Free Movement is on. They don't change walking speed or the number of steps to a destination:
+
+- Holding the mouse button no longer makes the hero stop briefly between steps.
+- Holding the mouse over a house, tree or other obstacle walks to the nearest reachable spot instead of standing still.
+- Paths follow a straight line instead of an L shape.
+- With a controller, walking queues several steps ahead and slides along walls.
+
+## Known limitations
+
+- Diablo's hero sprites only have 8 directions, so the hero always faces the closest of those 8.
+- Free Movement adds a new network message, so multiplayer with regular DevilutionX builds is not supported. Multiplayer between players on this fork is untested.
+- Recorded demos (such as the `Timedemo` test) made with regular DevilutionX no longer play back the same way.
+
+---
+
 # What is DevilutionX
 
 DevilutionX is a port of Diablo and Hellfire that strives to make it simple to run the game while providing engine improvements, bug fixes, and some optional quality of life features.

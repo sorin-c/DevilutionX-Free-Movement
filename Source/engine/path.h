@@ -66,6 +66,26 @@ const Displacement PathDirs[8] = {
 [[nodiscard]] int8_t GetPathDirection(Point startPosition, Point destinationPosition);
 
 /**
+ * @brief Gets the displacement of one step of a path, the inverse of GetPathDirection.
+ */
+[[nodiscard]] Displacement GetPathStepDisplacement(int8_t step);
+
+/**
+ * @brief Reorders the steps of a path so it follows the straight line towards its destination as closely as possible.
+ *
+ * FindPath takes all diagonal steps first, so walking towards a target looks like an L shape. Each part of the path is
+ * replaced by the tiles closest to the straight line between its ends, as long as that line can be walked and takes
+ * the same number of steps. The length of the path, and the time it takes to walk it, stay the same.
+ *
+ * @param canStep Same as for FindPath
+ * @param posOk Same as for FindPath
+ * @param startPosition The position the path starts from
+ * @param path The steps returned by FindPath, changed in place
+ * @param pathLength The number of steps in path
+ */
+void StraightenPath(tl::function_ref<bool(Point, Point)> canStep, tl::function_ref<bool(Point)> posOk, Point startPosition, int8_t *path, int pathLength);
+
+/**
  * @brief Searches for the closest position that passes the check in expanding "rings".
  *
  * The search space is roughly equivalent to a square of tiles where the walking distance is equal to the radius except

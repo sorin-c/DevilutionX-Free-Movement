@@ -181,6 +181,13 @@ int8_t GetPathDirection(Point startPosition, Point destinationPosition)
 	return PathDirections[(3 * (destinationPosition.y - startPosition.y)) + 4 + destinationPosition.x - startPosition.x];
 }
 
+Displacement GetPathStepDisplacement(int8_t step)
+{
+	// Inverse of GetPathDirection
+	constexpr Displacement StepDisplacements[9] = { { 0, 0 }, { 0, -1 }, { -1, 0 }, { 1, 0 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, 1 } };
+	return StepDisplacements[step];
+}
+
 int FindPath(tl::function_ref<bool(Point, Point)> canStep, tl::function_ref<bool(Point)> posOk, Point startPosition, Point destinationPosition, int8_t *path, size_t maxPathLength)
 {
 	const PointT start { startPosition };
@@ -280,6 +287,77 @@ int FindPath(tl::function_ref<bool(Point, Point)> canStep, tl::function_ref<bool
 	}
 
 	return 0; // no path
+}
+
+namespace {
+
+/** @brief Longest part of a path that StraightenPath replaces with a single straight line. */
+constexpr int MaxStraightSegmentLength = 24;
+
+/**
+ * @brief Divides and rounds half away from zero, so lines are symmetric in all directions.
+ */
+int DivideRounded(int numerator, int denominator)
+{
+	const int rounded = ((2 * std::abs(numerator)) + denominator) / (2 * denominator);
+	return numerator < 0 ? -rounded : rounded;
+}
+
+/**
+ * @brief Writes the steps along the tiles closest to the straight line between two positions.
+ * @return false if the line can't be walked
+ */
+bool TryGetStraightSteps(tl::function_ref<bool(Point, Point)> canStep, tl::function_ref<bool(Point)> posOk, Point from, Point to, Point pathDestination, int8_t *steps)
+{
+	const Displacement delta = to - from;
+	const int length = std::max(std::abs(delta.deltaX), std::abs(delta.deltaY));
+	Point previous = from;
+	for (int i = 1; i <= length; i++) {
+		const Point next = from + Displacement { DivideRounded(delta.deltaX * i, length), DivideRounded(delta.deltaY * i, length) };
+		if (posOk(next)) {
+			if (!canStep(previous, next))
+				return false;
+		} else if (next != pathDestination) {
+			// Like FindPath, only the destination of the path may be a tile that can't be walked on.
+			return false;
+		}
+		steps[i - 1] = GetPathDirection(previous, next);
+		previous = next;
+	}
+	return true;
+}
+
+} // namespace
+
+void StraightenPath(tl::function_ref<bool(Point, Point)> canStep, tl::function_ref<bool(Point)> posOk, Point startPosition, int8_t *path, int pathLength)
+{
+	if (pathLength < 2 || pathLength > static_cast<int>(MaxPathLengthPlayer))
+		return;
+
+	Point positions[MaxPathLengthPlayer + 1];
+	positions[0] = startPosition;
+	for (int i = 0; i < pathLength; i++)
+		positions[i + 1] = positions[i] + GetPathStepDisplacement(path[i]);
+	const Point destination = positions[pathLength];
+
+	int8_t steps[MaxStraightSegmentLength];
+	int start = 0;
+	while (start < pathLength - 1) {
+		int end = std::min(pathLength, start + MaxStraightSegmentLength);
+		for (; end > start + 1; end--) {
+			// The line needs as many steps as the part of the path it replaces, so the path doesn't get longer.
+			if (positions[start].WalkingDistance(positions[end]) != end - start)
+				continue;
+			if (TryGetStraightSteps(canStep, posOk, positions[start], positions[end], destination, steps))
+				break;
+		}
+		if (end > start + 1) {
+			std::copy(steps, steps + (end - start), path + start);
+			start = end;
+		} else {
+			start++;
+		}
+	}
 }
 
 std::optional<Point> FindClosestValidPosition(tl::function_ref<bool(Point)> posOk, Point startingPosition, unsigned int minimumRadius, unsigned int maximumRadius)
