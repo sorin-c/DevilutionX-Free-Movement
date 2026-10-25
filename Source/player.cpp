@@ -1115,13 +1115,21 @@ constexpr int32_t FreeMovementSideRatio = 105;
 constexpr int32_t FreeMovementCornerRatio = 719;
 
 /**
+ * @brief Free movement speed along a tile's side (diagonal on screen), in percent of tile based walking.
+ *
+ * Tile based walking crosses a tile's corner (left, right, up or down on screen) about 1.41 times as fast as it walks
+ * along a tile's side. Free movement narrows that gap.
+ */
+constexpr int FreeMovementSideSpeedPercent = 125;
+
+/**
  * @brief Gets how far free movement goes towards a point in one game tick.
  *
  * Tile based walking takes one step per tile, both along a tile's side and across its corner, so reaching a point
  * takes as many steps as the larger of the distances along x and y, and it covers sqrt(1 + ratio^2) tiles per step,
- * with ratio being the smaller distance divided by the larger. Free movement uses the same speed, except that within
- * 5 degrees on screen of one of the 8 directions it uses exactly that direction's speed, so aiming a little off
- * doesn't slow the player down.
+ * with ratio being the smaller distance divided by the larger. Free movement follows the same curve, but starts at
+ * FreeMovementSideSpeedPercent along a tile's side. Within 5 degrees on screen of one of the 8 directions it uses
+ * exactly that direction's speed, so aiming a little off doesn't slow the player down.
  */
 DisplacementOf<int32_t> GetFreeMovementStep(const Player &player, DisplacementOf<int32_t> toTarget)
 {
@@ -1131,7 +1139,11 @@ DisplacementOf<int32_t> GetFreeMovementStep(const Player &player, DisplacementOf
 	const int32_t smaller = std::min(std::abs(toTarget.deltaX), std::abs(toTarget.deltaY));
 	const int32_t ratio = smaller * 1024 / larger;
 	const double snappedRatio = std::clamp<int32_t>((ratio - FreeMovementSideRatio) * 1024 / (FreeMovementCornerRatio - FreeMovementSideRatio), 0, 1024) / 1024.0;
-	const double tilesPerStep = std::sqrt(1.0 + (snappedRatio * snappedRatio));
+	constexpr double SideTilesPerStep = FreeMovementSideSpeedPercent / 100.0;
+	constexpr double CornerTilesPerStep = 1.4142135623730951;
+	// 0 along a tile's side, 1 across its corner, in between like tile based walking
+	const double towardsCorner = (std::sqrt(1.0 + (snappedRatio * snappedRatio)) - 1.0) / (CornerTilesPerStep - 1.0);
+	const double tilesPerStep = SideTilesPerStep + ((CornerTilesPerStep - SideTilesPerStep) * towardsCorner);
 	const double unitsPerTick = FreeMovementUnitsPerTile * tilesPerStep / GetTicksPerWalkStep(player);
 
 	const double distance = std::sqrt((static_cast<double>(toTarget.deltaX) * toTarget.deltaX) + (static_cast<double>(toTarget.deltaY) * toTarget.deltaY));
