@@ -564,10 +564,13 @@ Lightmap Lightmap::bleedUp(bool perPixelLighting, const Lightmap &source, Point 
 		if (rowCount > clipBottom && lightLength < lightmapPitch)
 			memcpy(dst, dst + lightmapPitch, lightmapPitch);
 
-		// Copy data from the source lightmap between the top edge of the base diamond
-		assert(dst + lightOffset + lightLength <= lightmapBuffer.data() + TILE_WIDTH * TILE_HEIGHT);
-		assert(src + lightOffset + lightLength <= source.lightmapBuffer.data() + source.lightmapBuffer.size());
-		memcpy(dst + lightOffset, src + lightOffset, lightLength);
+		// Copy data from the source lightmap between the top edge of the base diamond.
+		// Near the right edge of the lightmap, lightOffset can point past the end of the row when there is nothing to copy.
+		if (lightLength > 0) {
+			assert(dst + lightOffset + lightLength <= lightmapBuffer.data() + TILE_WIDTH * TILE_HEIGHT);
+			assert(src + lightOffset + lightLength <= source.lightmapBuffer.data() + source.lightmapBuffer.size());
+			memcpy(dst + lightOffset, src + lightOffset, lightLength);
+		}
 
 		src -= source.lightmapPitch;
 		dst -= lightmapPitch;
